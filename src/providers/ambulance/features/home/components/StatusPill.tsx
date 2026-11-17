@@ -1,0 +1,17 @@
+import { Text, View } from "react-native";
+
+export default function StatusPill({ label, color = "#1473E6" }: any) {
+  return (
+    <View
+      style={{
+        alignSelf: "flex-start",
+        paddingHorizontal: 9,
+        paddingVertical: 5,
+        borderRadius: 8,
+        backgroundColor: `${color}18`,
+      }}
+    >
+      <Text style={{ color, fontSize: 9, fontWeight: "900" }}>{label}</Text>
+    </View>
+  );
+}

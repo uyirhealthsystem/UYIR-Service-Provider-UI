@@ -1,0 +1,177 @@
+import { Ionicons } from "@expo/vector-icons";
+import { useFocusEffect } from "@react-navigation/native";
+import { useCallback, useState } from "react";
+import {
+  Alert,
+  Pressable,
+  ScrollView,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
+import {
+  getLabTests,
+  getProviderContext,
+  updateLabTest,
+} from "../../../api/laboratory";
+
+export default function LabTests() {
+  const [labId, setLabId] = useState<string | null>(null);
+  const [items, setItems] = useState<any[]>([]);
+  const [editing, setEditing] = useState<string | null>(null);
+  const [price, setPrice] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const load = async () => {
+    setLoading(true);
+    try {
+      const context = await getProviderContext();
+      const id = context.lab?.labId;
+      setLabId(id || null);
+      if (id) {
+        const response = await getLabTests(id);
+        setItems(Array.isArray(response?.data) ? response.data : []);
+      }
+    } catch (e) {
+      console.log("Lab tests API error:", e);
+    } finally {
+      setLoading(false);
+    }
+  };
+  useFocusEffect(
+    useCallback(() => {
+      load();
+    }, []),
+  );
+  const save = async (item: any) => {
+    const value = Number(price);
+    if (!Number.isFinite(value) || value < 0 || !labId)
+      return Alert.alert("Invalid price", "Enter a valid price.");
+    setSaving(true);
+    try {
+      await updateLabTest(labId, item.labTestId, { price: value });
+      setEditing(null);
+      await load();
+    } catch (e: any) {
+      Alert.alert("Update failed", e?.message || "Unable to update test.");
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: "#F6F8FC" }}>
+      <View style={{ padding: 18 }}>
+        <Text style={{ fontSize: 22, fontWeight: "900", color: "#172033" }}>
+          Lab Tests
+        </Text>
+        <Text style={{ marginTop: 4, color: "#758096", fontSize: 11 }}>
+          Tests configured for this laboratory
+        </Text>
+      </View>
+      <ScrollView contentContainerStyle={{ padding: 16, paddingTop: 0 }}>
+        {loading ? (
+          <Text style={{ color: "#758096" }}>Loading tests...</Text>
+        ) : items.length ? (
+          items.map((item) => {
+            const active = editing === item.labTestId;
+            return (
+              <View
+                key={item.labTestId}
+                style={{
+                  backgroundColor: "#fff",
+                  borderRadius: 14,
+                  padding: 15,
+                  marginBottom: 10,
+                }}
+              >
+                <View style={{ flexDirection: "row", alignItems: "center" }}>
+                  <View style={{ flex: 1 }}>
+                    <Text
+                      style={{
+                        fontSize: 14,
+                        fontWeight: "800",
+                        color: "#172033",
+                      }}
+                    >
+                      {item.testCatalog?.name || "Lab test"}
+                    </Text>
+                    <Text
+                      style={{ marginTop: 4, fontSize: 10, color: "#687386" }}
+                    >
+                      {item.testCatalog?.code || "-"} • TAT{" "}
+                      {item.turnaroundTime ?? "-"} hrs
+                    </Text>
+                  </View>
+                  <Pressable
+                    onPress={() => {
+                      setEditing(item.labTestId);
+                      setPrice(String(item.price ?? ""));
+                    }}
+                  >
+                    <Ionicons name="create-outline" size={21} color="#173FD1" />
+                  </Pressable>
+                </View>
+                {active && (
+                  <View
+                    style={{
+                      marginTop: 12,
+                      flexDirection: "row",
+                      alignItems: "center",
+                    }}
+                  >
+                    <TextInput
+                      value={price}
+                      onChangeText={setPrice}
+                      keyboardType="decimal-pad"
+                      placeholder="Price"
+                      style={{
+                        flex: 1,
+                        borderWidth: 1,
+                        borderColor: "#DDE3EE",
+                        borderRadius: 10,
+                        padding: 11,
+                      }}
+                    />
+                    <Pressable
+                      disabled={saving}
+                      onPress={() => save(item)}
+                      style={{
+                        marginLeft: 8,
+                        backgroundColor: "#173FD1",
+                        borderRadius: 10,
+                        paddingHorizontal: 16,
+                        paddingVertical: 12,
+                      }}
+                    >
+                      <Text style={{ color: "#fff", fontWeight: "800" }}>
+                        {saving ? "..." : "Save"}
+                      </Text>
+                    </Pressable>
+                  </View>
+                )}
+                <Text
+                  style={{
+                    marginTop: 9,
+                    fontSize: 12,
+                    fontWeight: "800",
+                    color: "#173FD1",
+                  }}
+                >
+                  ₹{Number(item.price || 0).toLocaleString("en-IN")} •{" "}
+                  {item.status || "ACTIVE"}
+                </Text>
+              </View>
+            );
+          })
+        ) : (
+          <View
+            style={{ backgroundColor: "#fff", borderRadius: 14, padding: 18 }}
+          >
+            <Text style={{ color: "#758096" }}>No lab tests configured.</Text>
+          </View>
+        )}
+      </ScrollView>
+    </SafeAreaView>
+  );
+}

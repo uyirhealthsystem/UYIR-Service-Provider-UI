@@ -1,0 +1,2 @@
+import { Text, View } from "react-native";
+export default function ReportTabs() { return <View style={{ flexDirection: "row", marginTop: 14, backgroundColor: "#E9EDF5", borderRadius: 10, padding: 3 }}><View style={{ flex: 1, backgroundColor: "#173FD1", borderRadius: 8, paddingVertical: 9, alignItems: "center" }}><Text style={{ color: "#fff", fontSize: 11, fontWeight: "800" }}>Pending Upload</Text></View><View style={{ flex: 1, paddingVertical: 9, alignItems: "center" }}><Text style={{ color: "#687386", fontSize: 11, fontWeight: "800" }}>Sent</Text></View></View>; }

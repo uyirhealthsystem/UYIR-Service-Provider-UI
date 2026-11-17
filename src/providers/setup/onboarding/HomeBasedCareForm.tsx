@@ -1,0 +1,7 @@
+import { Pressable, ScrollView, Text, TextInput } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
+
+export default function HomeBasedCareForm({ navigation }: any) {
+  return <SafeAreaView style={{ flex: 1, backgroundColor: "#FFFFFF" }}><ScrollView contentContainerStyle={{ padding: 24 }}><Pressable onPress={() => navigation.goBack()}><Text style={{ fontSize: 28 }}>‹</Text></Pressable><Text style={{ marginTop: 18, fontSize: 28, fontWeight: "700", color: "#111827" }}>Home-Based Care Details</Text><Text style={{ marginTop: 8, color: "#6B7280", lineHeight: 19 }}>Complete your provider profile. Your service category is assigned by the backend during registration.</Text><TextInput placeholder="Provider / Business name" style={input(28)} /><TextInput placeholder="Contact person" style={input(12)} /><TextInput placeholder="Phone number" keyboardType="phone-pad" style={input(12)} /><TextInput placeholder="Service area" style={input(12)} /><TextInput placeholder="Business / Home address" multiline style={{ ...input(12), minHeight: 90, textAlignVertical: "top" }} /><Pressable onPress={() => navigation.replace("PendingApproval")} style={{ marginTop: 24, backgroundColor: "#173FD1", padding: 16, borderRadius: 12, alignItems: "center" }}><Text style={{ color: "#FFFFFF", fontSize: 16, fontWeight: "700" }}>Submit for Approval</Text></Pressable></ScrollView></SafeAreaView>;
+}
+function input(marginTop: number) { return { marginTop, borderWidth: 1, borderColor: "#E1E5EC", borderRadius: 12, padding: 15 } as const; }

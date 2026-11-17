@@ -1,0 +1,299 @@
+import { File } from "expo-file-system";
+import { BASE_URL, HOSPITAL_API_URL } from "../config/env";
+import { getProUserId, proApi } from "./client";
+import { authFetch, getAccessToken, getAuthUserId, getAuthRole } from "../../../auth/session";
+
+export async function uploadProHospitalImages(
+  proHospitalId: string,
+  image1: string,
+  image2: string,
+) {
+  const body = new FormData();
+
+  const hospitalPhoto = new File(image1);
+  const proHospitalPhoto = new File(image2);
+
+  body.append("image1", hospitalPhoto);
+  body.append("image2", proHospitalPhoto);
+
+  const userId = getProUserId();
+
+  if (!userId) {
+    throw new Error("PRO user ID not available. Please login again.");
+  }
+
+  console.log("========== PRO IMAGE UPLOAD ==========");
+  console.log("proHospitalId:", proHospitalId);
+  console.log("image1:", image1);
+  console.log("image2:", image2);
+  console.log(
+    "URL:",
+    `${BASE_URL}/api/v1/pro/hospital/${proHospitalId}/images`,
+  );
+
+  const response = await fetch(
+    `${BASE_URL}/api/v1/pro/hospital/${proHospitalId}/images`,
+    {
+      method: "PATCH",
+      headers: {
+        "x-user-id": userId,
+      },
+      body,
+    },
+  );
+
+  console.log("Upload status:", response.status);
+  console.log("Upload status text:", response.statusText);
+
+  const rawResponse = await response.text();
+
+  console.log("Upload raw response:", rawResponse);
+
+  let data = null;
+
+  try {
+    data = JSON.parse(rawResponse);
+  } catch {
+    data = null;
+  }
+
+  if (!response.ok) {
+    throw new Error(
+      data?.message ||
+        data?.error?.message ||
+        rawResponse ||
+        `Image upload failed with status ${response.status}`,
+    );
+  }
+
+  return data;
+}
+export function updateProHospitalStatus(
+  proHospitalId: string,
+  data: {
+    status: string;
+    reason?: string;
+  },
+) {
+  return proApi(`/pro/hospital/${proHospitalId}`, {
+    method: "PATCH",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function submitHospital(payload: any) {
+  const token = getAccessToken();
+  const userId = getAuthUserId();
+  const role = getAuthRole();
+  const url = `${HOSPITAL_API_URL}/api/v1/hospital`;
+  if (!token || !userId) throw new Error("Please log in again before submitting hospital details.");
+  const response = await authFetch(url, {
+    method: "POST",
+    headers: { Accept: "application/json", "Content-Type": "application/json", Authorization: `Bearer ${token}`, "X-User-Id": userId, "X-User-Role": role || "PRO" },
+    body: JSON.stringify(payload),
+  });
+  const data = await response.json().catch(() => null);
+  if (!response.ok) {
+    const error: any = new Error(data?.error?.message || data?.message || `Hospital API returned ${response.status}`);
+    error.status = response.status;
+    error.data = data;
+    throw error;
+  }
+  return data?.data ?? data;
+}
+
+export async function submitDoctor(payload: any) {
+  const token = getAccessToken();
+  const userId = getAuthUserId();
+  const role = getAuthRole();
+  if (!token || !userId) throw new Error("Please log in again before submitting doctor details.");
+  const url = `${HOSPITAL_API_URL}/api/v1/hospital/doctors`;
+  const response = await authFetch(url, {
+    method: "POST",
+    headers: { Accept: "application/json", "Content-Type": "application/json", Authorization: `Bearer ${token}`, "X-User-Id": userId, "X-User-Role": role || "PRO" },
+    body: JSON.stringify(payload),
+  });
+  const data = await response.json().catch(() => null);
+  if (!response.ok) {
+    const error: any = new Error(data?.error?.message || data?.message || `Doctor API returned ${response.status}`);
+    error.status = response.status;
+    error.data = data;
+    throw error;
+  }
+  return data?.data ?? data;
+}
+
+export async function getOnboardingMaster(path: "specialties" | "emergency-conditions") {
+  const response = await fetch(`${HOSPITAL_API_URL}/api/v1/hospital/${path}`, { headers: { Accept: "application/json" } });
+  const data = await response.json().catch(() => null);
+  if (!response.ok) throw new Error(data?.message || `Unable to load ${path}`);
+  const value = data?.data ?? data;
+  return Array.isArray(value) ? value : Array.isArray(value?.items) ? value.items : [];
+}
+
+function toNumber(value: any) {
+  if (value === undefined || value === null || value === "") return undefined;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : undefined;
+}
+
+function toArray(value: any) {
+  if (Array.isArray(value)) return value.filter(Boolean);
+  if (typeof value !== "string") return [];
+  return value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function selectedOrOther(value: any, otherValue: any) {
+  return value === "Other" ? String(otherValue || "").trim() : value;
+}
+
+function toArrayWithOther(value: any, otherValue: any) {
+  const values = toArray(value).filter((item) => item !== "Other");
+  if (toArray(value).includes("Other") && String(otherValue || "").trim()) values.push(String(otherValue).trim());
+  return values;
+}
+
+function toStaff(value: any) {
+  if (Array.isArray(value)) {
+    return value
+      .map((member) => ({
+        name: String(member?.name || "").trim(),
+        mobileNumber: String(
+          member?.mobileNumber || member?.mobile || "",
+        ).trim(),
+        designation: String(member?.designation === "Other" ? member?.designationOther || "" : member?.designation || "").trim(),
+      }))
+      .filter(
+        (member) =>
+          member.name || member.mobileNumber || member.designation,
+      );
+  }
+
+  if (typeof value !== "string") return [];
+
+  return value
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const [name = "", mobileNumber = "", designation = ""] = line
+        .split("|")
+        .map((item) => item.trim());
+
+      return {
+        name,
+        mobileNumber,
+        designation,
+      };
+    });
+}
+
+export function buildHospitalPayload(form: any) {
+  const payload: any = {
+    hospitalName: String(form.hospitalName || "").trim(),
+    registrationNumber: String(form.registrationNumber || "").trim(),
+    ownershipType: selectedOrOther(form.ownershipType, form.ownershipTypeOther),
+    hospitalType: selectedOrOther(form.hospitalType, form.hospitalTypeOther),
+    address: {
+      addressLine: String(form.addressLine || "").trim(),
+      city: String(form.city || "").trim(),
+      district: String(form.district || "").trim(),
+      state: String(form.state || "").trim(),
+      country: String(form.country || "").trim(),
+      pincode: String(form.pincode || "").trim(),
+      ...(toNumber(form.longitude) !== undefined && toNumber(form.latitude) !== undefined ? {
+        location: { type: "Point", coordinates: [toNumber(form.longitude), toNumber(form.latitude)] },
+      } : {}),
+    },
+    contactDetails: {
+      phone: String(form.phone || "").trim() ? `${String(form.phoneCountryCode || "+91")}-${String(form.phone).trim()}` : "",
+      ...(String(form.alternatePhone || "").trim() ? { alternatePhone: String(form.alternatePhone).trim() } : {}),
+      ...(String(form.email || "").trim() ? { email: String(form.email).trim() } : {}),
+      ...(String(form.emergencyHotline || "").trim() ? { emergencyHotline: String(form.emergencyHotline).trim() } : {}),
+      ...(String(form.website || "").trim() ? { website: `${form.websiteProtocol || "https://"}${String(form.website).trim().replace(/^https?:\/\//i, "")}` } : {}),
+    },
+    facilities: {
+      bedCapacity: {
+        general: toNumber(form.generalBeds) ?? 0,
+        icu: toNumber(form.icuBeds) ?? 0,
+        nicu: toNumber(form.nicuBeds) ?? 0,
+      },
+      specialtyDepartments: toArrayWithOther(form.specialtyDepartments, form.specialtyDepartmentsOther),
+      diagnosticUnits: {
+        lab: form.labAvailable === true,
+        scanCentre: form.scanCentreAvailable === true,
+
+      },
+      ...((form.labAvailable === true || form.scanCentreAvailable === true) ? { labDetails: {
+        ...(form.labAvailable === true ? { labName: String(form.labName || "").trim(), qualification: String(selectedOrOther(form.labQualification, form.labQualificationOther) || "").trim(), facilities: toArrayWithOther(form.labFacilities, form.labFacilitiesOther) } : {}),
+        ...(form.scanCentreAvailable === true ? { scanCentreName: String(form.scanCentreName || "").trim(), pcpndtRegistrationNumber: String(form.pcpndtRegistrationNumber || "").trim() } : {}),
+      } } : {}),
+    },
+    emergencyServices: {
+      handlesEmergencies: form.handlesEmergencies === true,
+      ...(form.handlesEmergencies === true ? { specialtyEmergencyConditionsHandled: toArrayWithOther(form.specialtyEmergencyConditionsHandled, form.specialtyEmergencyConditionsHandledOther) } : {}),
+      ambulanceAvailable: form.ambulanceAvailable === true,
+      ...(form.ambulanceAvailable === true ? { ambulanceTypes: toArrayWithOther(form.ambulanceTypes, form.ambulanceTypesOther), ambulance24x7Available: form.ambulance24x7Available === true, willingToAttachAmbulanceToUdhs: form.willingToAttachAmbulanceToUdhs === true } : {}),
+    },
+    staffDetails: {
+      nursingStaffCount: toNumber(form.nursingStaffCount) ?? 0,
+      supportiveStaffCount: toNumber(form.supportiveStaffCount) ?? 0,
+      udhsStaff: toStaff(form.udhsStaff),
+    },
+    operations: {
+      hospitalInsured: form.hospitalInsured === true,
+      dedicatedPharmacyAvailable: form.dedicatedPharmacyAvailable === true,
+      hospitalManagementSoftwareInUse:
+        form.hospitalManagementSoftwareInUse === true,
+      empanelledInsuranceCompanies: toArrayWithOther(form.empanelledInsuranceCompanies, form.empanelledInsuranceCompaniesOther),
+      scansAvailable: {
+        usg: form.usgAvailable === true,
+        xray: form.xrayAvailable === true,
+        ct: form.ctAvailable === true,
+        mri: form.mriAvailable === true,
+        other: toArrayWithOther(form.otherScans, form.otherScansOther),
+      },
+    },
+    surgicalNetwork: {
+      joinedSurgicalNetwork: form.joinedSurgicalNetwork === true,
+      ...(form.joinedSurgicalNetwork === true ? {
+        operationTheatreCount: toNumber(form.operationTheatreCount) ?? 0,
+        laserEquipmentAvailable: form.laserEquipmentAvailable === true,
+        minimallyInvasiveEquipmentAvailable: form.minimallyInvasiveEquipmentAvailable === true,
+        postOpRecoveryRoomAvailable: form.postOpRecoveryRoomAvailable === true,
+        endoscopyAvailable: form.endoscopyAvailable === true,
+        laparoscopyUnitsAvailable: form.laparoscopyUnitsAvailable === true,
+      } : {}),
+    },
+  };
+
+  return payload;
+}
+
+
+export function buildDoctorPayload(form: any, hospitalId: string) {
+  const specialties = toArrayWithOther(form.doctorSpecialties, form.doctorSpecialtiesOther);
+  const hospitalEmergencyConditions = toArray(form.specialtyEmergencyConditionsHandled);
+  const emergencyConditions = toArrayWithOther(form.doctorEmergencyConditions, form.doctorEmergencyConditionsOther).filter((item) => hospitalEmergencyConditions.includes(item) || item === String(form.doctorEmergencyConditionsOther || "").trim());
+  const qualifications = toArrayWithOther(form.doctorQualifications, form.doctorQualificationsOther);
+  const fee = toNumber(form.doctorFee);
+  return {
+    name: String(form.doctorName || "").trim(),
+    ...(String(form.doctorDob || "").trim() ? { dateOfBirth: String(form.doctorDob).trim() } : {}),
+    sex: form.doctorSex,
+    tnmcNumber: String(form.tnmcNumber || "").trim(),
+    qualifications,
+    specialties,
+    emergencyConditionsHandled: emergencyConditions,
+    ...(toNumber(form.doctorExperience) !== undefined ? { yearsOfExperience: toNumber(form.doctorExperience) } : {}),
+    ...(fee !== undefined ? { consultationFee: fee } : {}),
+    availability: { type: form.doctorAvailability || "CUSTOM_TIMINGS", ...(form.doctorAvailability === "CUSTOM_TIMINGS" ? { customTimings: String(form.doctorCustomTimings || "").trim() } : {}) },
+    engagementType: form.doctorEngagement,
+    ...(form.doctorCategory ? { doctorCategory: form.doctorCategory } : {}),
+    contactDetails: { phone: String(form.doctorPhone || "").trim() ? `${String(form.phoneCountryCode || "+91")}-${String(form.doctorPhone).trim()}` : "", ...(form.doctorEmail ? { email: String(form.doctorEmail).trim() } : {}) },
+    hospitalAssociations: [{ hospitalId, department: String(selectedOrOther(form.doctorDepartment, form.doctorDepartmentOther) || specialties[0] || "").trim(), ...(fee !== undefined ? { consultationFee: fee } : {}), active: true }],
+  };
+}
