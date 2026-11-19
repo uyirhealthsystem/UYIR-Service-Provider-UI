@@ -253,7 +253,7 @@ export const hospitalFields: HospitalSection[] = [
     fields: [
       { key: "doctorName", label: "Doctor full name", type: "text", required: true },
       { key: "doctorDob", label: "Date of Birth", type: "text", required: true },
-      { key: "doctorSex", label: "Sex", type: "select", required: true, options: ["MALE", "FEMALE"] },
+      { key: "doctorSex", label: "Sex", type: "select", required: true, options: ["MALE", "FEMALE", "OTHER"] },
       { key: "tnmcNumber", label: "TNMC registration number", type: "text", required: true },
       { key: "doctorQualifications", label: "Qualifications", type: "multiSelect", optionsSource: "doctorQualifications", required: true, itemLabel: "Qualification" },
       { key: "doctorSpecialties", label: "Doctor specialties", type: "multiSelect", optionsSource: "specialties", required: true, itemLabel: "Specialty" },

@@ -1,762 +1,339 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "@react-navigation/native";
 import { useCallback, useMemo, useRef, useState } from "react";
-import {
-  ActivityIndicator,
-  FlatList,
-  Pressable,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
-import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import { ActivityIndicator, FlatList, Pressable, RefreshControl, Text, TextInput, View } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 
 import { getBucket, pickHospital } from "../../../api/bucket";
 import { getAvailableHospitals } from "../../../api/hospitals";
 import { getMyProfile } from "../../../api/profile";
+import { colors, PRO_RULES, radius, shadow, spacing, typography } from "../../../theme";
+import { Button, EmptyState, ErrorBanner, HeaderIconButton, Pill, SlotMeter } from "../../../ui/components";
+import { proIdFrom, splitHospitalName } from "../../../ui/format";
 
-const MAX_SELECTION = 5;
+// Find hospitals: un-onboarded hospitals in the PRO's district
+// (GET /hospitalpool/available/:proId) that aren't in anyone's bucket.
+// Tap to select up to the free bucket slots, then add them in one go
+// (POST /pro/hospital).
+
+const MAX_SELECTION = PRO_RULES.bucketSize;
+
+type PoolHospital = {
+  hospitalPoolId: string;
+  title: string;
+  subtitle: string;
+  districtId?: string;
+  tnceraNo?: string;
+  establishmentType?: string;
+  search: string;
+};
+
+const extractList = (response: any): any[] =>
+  Array.isArray(response?.data?.hospitals) ? response.data.hospitals
+    : Array.isArray(response?.data) ? response.data
+      : Array.isArray(response?.hospitals) ? response.hospitals
+        : Array.isArray(response) ? response
+          : [];
 
 export default function Hospitals({ navigation }: any) {
-  const insets = useSafeAreaInsets();
   const hasLoadedHospitals = useRef(false);
   const proIdRef = useRef("");
 
   const [search, setSearch] = useState("");
-  const [hospitals, setHospitals] = useState<any[]>([]);
-  const [selectedHospitals, setSelectedHospitals] = useState<any[]>([]);
+  const [hospitals, setHospitals] = useState<PoolHospital[]>([]);
+  const [selected, setSelected] = useState<PoolHospital[]>([]);
   const [bucketCount, setBucketCount] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [loadError, setLoadError] = useState("");
   const [district, setDistrict] = useState("");
 
   const getBucketCount = useCallback(async (proId: string) => {
     try {
-      const bucketResponse = await getBucket(proId);
-
-      console.log(
-        "PRO bucket response:",
-        JSON.stringify(bucketResponse, null, 2),
-      );
-
-      const bucketData = bucketResponse?.data;
-      const bucketHospitals =
-        Array.isArray(bucketData?.hospitals)
-          ? bucketData.hospitals
-          : Array.isArray(bucketData)
-            ? bucketData
-            : Array.isArray(bucketResponse?.hospitals)
-              ? bucketResponse.hospitals
-              : Array.isArray(bucketResponse)
-                ? bucketResponse
-                : [];
-
-      setBucketCount(bucketHospitals.length);
+      setBucketCount(extractList(await getBucket(proId)).length);
     } catch (bucketError: any) {
       console.log("PRO bucket API error:", bucketError);
       setBucketCount(0);
     }
   }, []);
 
-  const loadHospitals = useCallback(async () => {
-    try {
-      setLoading(true);
-      setError("");
+  // `silent` refreshes keep the current list on screen (focus / pull-to-refresh).
+  const loadHospitals = useCallback(
+    async ({ silent = false }: { silent?: boolean } = {}) => {
+      try {
+        if (silent) setRefreshing(true);
+        else setLoading(true);
+        setLoadError("");
 
-      const profileResponse = await getMyProfile();
-      const profile = profileResponse?.data || profileResponse || {};
+        const profileResponse = await getMyProfile();
+        const profile = profileResponse?.data || profileResponse || {};
+        const proId = proIdFrom(profileResponse);
+        if (!proId) throw new Error("Your PRO profile could not be found. Please log in again.");
+        proIdRef.current = proId;
+        if (profile?.districtId) setDistrict(profile.districtId);
 
-      const proId = profile?.proId || profile?.pro?.proId || profile?.id;
-      const profileDistrict =
-        profile?.districtId || profile?.district?.name || profile?.district;
+        const rows = extractList(await getAvailableHospitals(proId));
+        console.log("Available hospitals count:", rows.length);
 
-      if (!proId) {
-        throw new Error("PRO ID not found");
+        // Keep only what the list needs (the pool can hold thousands of rows).
+        const list: PoolHospital[] = rows.map((h: any) => {
+          const { title, subtitle } = splitHospitalName(h?.name, h?.address);
+          return {
+            hospitalPoolId: h?.hospitalPoolId,
+            title,
+            subtitle,
+            districtId: h?.districtId,
+            tnceraNo: h?.tnceraNo,
+            establishmentType: h?.establishmentType,
+            search: `${h?.name || ""} ${h?.address || ""} ${h?.tnceraNo || ""} ${h?.establishmentType || ""}`.toLowerCase(),
+          };
+        });
+        setHospitals(list);
+        if (!profile?.districtId && list[0]?.districtId) setDistrict(list[0].districtId);
+        // Drop selections that are no longer available (picked by someone else).
+        setSelected((current) => current.filter((s) => list.some((h) => h.hospitalPoolId === s.hospitalPoolId)));
+        hasLoadedHospitals.current = true;
+
+        await getBucketCount(proId);
+      } catch (e: any) {
+        console.log("Hospitals screen API error:", e);
+        // A failed background refresh keeps the list on screen.
+        if (!(silent && hasLoadedHospitals.current)) setLoadError(e?.message || "Unable to load hospitals");
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
       }
-
-      proIdRef.current = proId;
-      setDistrict(profileDistrict || "");
-
-      const hospitalResponse = await getAvailableHospitals(proId);
-
-      console.log(
-        "Available hospitals response:",
-        JSON.stringify(hospitalResponse, null, 2),
-      );
-
-      const availableHospitals =
-        Array.isArray(hospitalResponse?.data?.hospitals)
-          ? hospitalResponse.data.hospitals
-          : Array.isArray(hospitalResponse?.data)
-            ? hospitalResponse.data
-            : Array.isArray(hospitalResponse?.hospitals)
-              ? hospitalResponse.hospitals
-              : Array.isArray(hospitalResponse)
-                ? hospitalResponse
-                : [];
-
-      console.log("Available hospitals count:", availableHospitals.length);
-
-      // Keep only fields needed by the list. This reduces memory usage for large
-      // responses such as the current 6,000+ hospital records.
-      const listHospitals = availableHospitals.map((hospital: any) => ({
-        hospitalPoolId: hospital?.hospitalPoolId,
-        serialNo: hospital?.serialNo,
-        name: hospital?.name || "Unnamed hospital",
-        address: hospital?.address,
-        districtId: hospital?.districtId,
-        tnceraNo: hospital?.tnceraNo,
-      }));
-
-      setHospitals(listHospitals);
-
-      if (!profileDistrict && listHospitals.length > 0) {
-        setDistrict(listHospitals[0]?.districtId || "");
-      }
-
-      hasLoadedHospitals.current = true;
-      setLoading(false);
-
-      // Bucket loading is independent. The hospital list must never wait for it.
-      await getBucketCount(proId);
-    } catch (loadError: any) {
-      console.log("Hospitals screen API error:", loadError);
-      setError(loadError?.message || "Unable to load hospitals");
-      setLoading(false);
-    }
-  }, [getBucketCount]);
-
-  useFocusEffect(
-    useCallback(() => {
-      if (!hasLoadedHospitals.current) {
-        loadHospitals();
-        return;
-      }
-
-      if (proIdRef.current) {
-        getBucketCount(proIdRef.current);
-      }
-    }, [getBucketCount, loadHospitals]),
+    },
+    [getBucketCount],
   );
 
-  const availableSlots = Math.max(0, MAX_SELECTION - bucketCount);
+  // Reload whenever the screen gains focus so newly imported / released
+  // hospitals appear without restarting the app.
+  useFocusEffect(
+    useCallback(() => {
+      loadHospitals({ silent: hasLoadedHospitals.current });
+    }, [loadHospitals]),
+  );
 
-  const filteredHospitals = useMemo(() => {
-    const query = search.trim().toLowerCase();
+  const freeSlots = Math.max(0, MAX_SELECTION - bucketCount);
+  const canSelectMore = selected.length < freeSlots;
 
-    if (!query) {
-      return hospitals;
-    }
-
-    return hospitals.filter((hospital) =>
-      `${hospital.name || ""} ${hospital.address || ""} ${
-        hospital.districtId || ""
-      } ${hospital.tnceraNo || ""}`
-        .toLowerCase()
-        .includes(query),
-    );
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return q ? hospitals.filter((h) => h.search.includes(q)) : hospitals;
   }, [hospitals, search]);
 
-  const isSelected = (hospital: any) => {
-    return selectedHospitals.some(
-      (item) => item.hospitalPoolId === hospital.hospitalPoolId,
-    );
+  const isSelected = (h: PoolHospital) => selected.some((s) => s.hospitalPoolId === h.hospitalPoolId);
+
+  const toggle = (h: PoolHospital) => {
+    setError("");
+    if (isSelected(h)) {
+      setSelected((cur) => cur.filter((s) => s.hospitalPoolId !== h.hospitalPoolId));
+      return;
+    }
+    if (freeSlots === 0) {
+      setError("Your bucket is full. Visit or release a hospital first.");
+      return;
+    }
+    if (!canSelectMore) {
+      setError(`You can add ${freeSlots} more hospital${freeSlots > 1 ? "s" : ""} right now.`);
+      return;
+    }
+    setSelected((cur) => [...cur, h]);
   };
 
-  const handleSelect = (hospital: any) => {
-    const selected = isSelected(hospital);
-
-    if (selected) {
-      setSelectedHospitals((current) =>
-        current.filter(
-          (item) => item.hospitalPoolId !== hospital.hospitalPoolId,
-        ),
-      );
-
-      return;
-    }
-
-    if (availableSlots === 0) {
-      return;
-    }
-
-    if (selectedHospitals.length >= availableSlots) {
-      return;
-    }
-
-    setSelectedHospitals((current) => [...current, hospital]);
-  };
-
-  const handleDone = async () => {
-    if (selectedHospitals.length === 0 || saving) {
-      return;
-    }
-
+  const addToBucket = async () => {
+    if (selected.length === 0 || saving) return;
     try {
       setSaving(true);
       setError("");
-
       const proId = proIdRef.current;
-
-      if (!proId) {
-        throw new Error("PRO ID not found");
-      }
-
-      await pickHospital({
-        proId,
-        hospitals: selectedHospitals.map((hospital) => ({
-          hospitalPoolId: hospital.hospitalPoolId,
-        })),
-      });
-
-      setSelectedHospitals([]);
-      hasLoadedHospitals.current = false;
-
+      if (!proId) throw new Error("Your PRO profile could not be found. Please log in again.");
+      await pickHospital({ proId, hospitals: selected.map((h) => ({ hospitalPoolId: h.hospitalPoolId })) });
+      setSelected([]);
       navigation.navigate("Bucket");
-    } catch (selectError: any) {
-      console.log("Pick hospital error:", selectError);
-      setError(selectError?.message || "Unable to add hospitals to bucket");
+    } catch (e: any) {
+      console.log("Pick hospital error:", e);
+      setError(e?.message || "Unable to add hospitals to your bucket.");
+      // Someone may have picked one of them meanwhile; refresh the list.
+      loadHospitals({ silent: true });
     } finally {
       setSaving(false);
     }
   };
 
-  const renderHospital = ({ item: hospital }: { item: any }) => {
-    const selected = isSelected(hospital);
-    const disabled =
-      !selected && selectedHospitals.length >= availableSlots;
-
+  const renderHospital = ({ item }: { item: PoolHospital }) => {
+    const on = isSelected(item);
+    const dim = !on && !canSelectMore;
     return (
-      <View
-        style={{
-          backgroundColor: "#fff",
-          borderRadius: 14,
-          padding: 11,
-          marginBottom: 12,
-          borderWidth: selected ? 1.5 : 1,
-          borderColor: selected ? "#2563EB" : "#EEF1F5",
-        }}
+      <Pressable
+        onPress={() => toggle(item)}
+        accessibilityRole="checkbox"
+        accessibilityState={{ checked: on, disabled: dim }}
+        accessibilityLabel={item.title}
+        style={({ pressed }) => ({
+          flexDirection: "row",
+          alignItems: "flex-start",
+          backgroundColor: on ? "#F5F8FF" : colors.surface,
+          borderRadius: radius.lg,
+          borderWidth: on ? 1.5 : 1,
+          borderColor: on ? colors.brand : colors.border,
+          padding: spacing.lg,
+          marginBottom: spacing.md,
+          opacity: dim ? 0.55 : pressed ? 0.85 : 1,
+          ...shadow.card,
+        })}
       >
-        <View
-          style={{
-            flexDirection: "row",
-            alignItems: "center",
-          }}
-        >
-          <View
-            style={{
-              width: 64,
-              height: 72,
-              borderRadius: 9,
-              backgroundColor: "#EAF2FF",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            <Ionicons
-              name="business-outline"
-              size={29}
-              color="#2563EB"
-            />
-          </View>
-
-          <View
-            style={{
-              flex: 1,
-              marginLeft: 11,
-              minWidth: 0,
-            }}
-          >
-            <Text
-              numberOfLines={2}
-              style={{
-                fontSize: 14,
-                fontWeight: "700",
-                color: "#111827",
-              }}
-            >
-              {String(hospital.name || "Unnamed hospital").replace(
-                /\r?\n/g,
-                " ",
-              )}
-            </Text>
-
-            <View
-              style={{
-                flexDirection: "row",
-                alignItems: "center",
-                marginTop: 5,
-              }}
-            >
-              <Ionicons
-                name="location-outline"
-                size={12}
-                color="#6B7280"
-              />
-
-              <Text
-                numberOfLines={1}
-                style={{
-                  flex: 1,
-                  marginLeft: 3,
-                  fontSize: 11,
-                  color: "#6B7280",
-                }}
-              >
-                {hospital.address ||
-                  hospital.districtId ||
-                  "Address unavailable"}
-              </Text>
-            </View>
-
-            <View
-              style={{
-                flexDirection: "row",
-                alignItems: "center",
-                marginTop: 6,
-              }}
-            >
-              <Ionicons
-                name="document-text-outline"
-                size={13}
-                color="#7C3AED"
-              />
-
-              <Text
-                numberOfLines={1}
-                style={{
-                  marginLeft: 4,
-                  fontSize: 10,
-                  color: "#6B7280",
-                }}
-              >
-                TNCERA: {hospital.tnceraNo || "Not available"}
-              </Text>
-            </View>
+        <View style={{ width: 42, height: 42, borderRadius: 13, backgroundColor: colors.brandSoft, alignItems: "center", justifyContent: "center" }}>
+          <Ionicons name="business" size={20} color={colors.brand} />
+        </View>
+        <View style={{ flex: 1, marginLeft: spacing.md, minWidth: 0 }}>
+          <Text style={[typography.label, { fontSize: 15 }]} numberOfLines={2}>{item.title}</Text>
+          {item.subtitle ? <Text style={[typography.caption, { marginTop: 3, lineHeight: 17 }]} numberOfLines={2}>{item.subtitle}</Text> : null}
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: spacing.sm }}>
+            {item.establishmentType ? <Pill label={item.establishmentType} tone="violet" /> : null}
+            {item.tnceraNo ? <Pill label={item.tnceraNo} icon="document-text-outline" /> : null}
           </View>
         </View>
-
-        <Pressable
-          onPress={() => handleSelect(hospital)}
-          disabled={disabled}
+        <View
           style={{
-            marginTop: 10,
-            height: 38,
-            borderRadius: 9,
+            width: 26,
+            height: 26,
+            borderRadius: 13,
+            marginLeft: spacing.sm,
+            borderWidth: 2,
+            borderColor: on ? colors.brand : colors.border,
+            backgroundColor: on ? colors.brand : colors.surface,
             alignItems: "center",
             justifyContent: "center",
-            backgroundColor: selected
-              ? "#EAF2FF"
-              : disabled
-                ? "#E5E7EB"
-                : "#173FD1",
           }}
         >
-          <View
-            style={{
-              flexDirection: "row",
-              alignItems: "center",
-            }}
-          >
-            {selected && (
-              <Ionicons
-                name="checkmark-circle"
-                size={15}
-                color="#2563EB"
-                style={{ marginRight: 5 }}
-              />
-            )}
-
-            <Text
-              style={{
-                fontSize: 11,
-                fontWeight: "700",
-                color: selected
-                  ? "#2563EB"
-                  : disabled
-                    ? "#9CA3AF"
-                    : "#fff",
-              }}
-            >
-              {selected
-                ? "Selected"
-                : disabled
-                  ? "Selection Full"
-                  : "Select Hospital"}
-            </Text>
-          </View>
-        </Pressable>
-      </View>
+          {on ? <Ionicons name="checkmark" size={16} color={colors.white} /> : null}
+        </View>
+      </Pressable>
     );
   };
 
-  const listHeader = (
-    <View
-      style={{
-        flexDirection: "row",
-        alignItems: "center",
-        paddingTop: 15,
-        paddingBottom: 10,
-      }}
-    >
-      <Ionicons name="location-outline" size={16} color="#2563EB" />
-
-      <Text
-        style={{
-          marginLeft: 5,
-          fontSize: 12,
-          fontWeight: "600",
-          color: "#374151",
-        }}
-      >
-        Hospitals near {district || "your district"}
+  const header = (
+    <View style={{ paddingTop: spacing.lg }}>
+      <View style={{ backgroundColor: colors.surface, borderRadius: radius.lg, padding: spacing.lg, borderWidth: 1, borderColor: colors.border }}>
+        <View style={{ flexDirection: "row", alignItems: "center", marginBottom: spacing.sm }}>
+          <Text style={[typography.label, { flex: 1 }]}>
+            {freeSlots === 0 ? "Bucket full" : `${freeSlots - selected.length} of ${freeSlots} free slot${freeSlots > 1 ? "s" : ""} left`}
+          </Text>
+          <Text style={typography.caption}>{bucketCount + selected.length}/{MAX_SELECTION}</Text>
+        </View>
+        <SlotMeter used={bucketCount + selected.length} total={MAX_SELECTION} />
+        <Text style={[typography.caption, { marginTop: spacing.sm }]}>
+          {freeSlots === 0
+            ? "Visit or release a hospital in your bucket to pick more."
+            : `Picked hospitals are reserved for you — visit each within ${PRO_RULES.visitWindowHours} hours.`}
+        </Text>
+      </View>
+      <Text style={[typography.overline, { marginTop: spacing.xl, marginBottom: spacing.sm }]}>
+        {filtered.length} {search.trim() ? "MATCHING" : "AVAILABLE"} HOSPITAL{filtered.length === 1 ? "" : "S"}
       </Text>
-
-      <View style={{ flex: 1 }} />
-
-      <Text
-        style={{
-          fontSize: 11,
-          color: "#6B7280",
-        }}
-      >
-        {filteredHospitals.length} found
-      </Text>
+      {error ? <View style={{ marginBottom: spacing.md, marginTop: -spacing.md }}><ErrorBanner message={error} /></View> : null}
     </View>
   );
 
   return (
-    <SafeAreaView
-      style={{
-        flex: 1,
-        backgroundColor: "#F7F9FC",
-      }}
-      edges={["top"]}
-    >
-      <View
-        style={{
-          backgroundColor: "#fff",
-          paddingHorizontal: 20,
-          paddingTop: 8,
-          paddingBottom: 15,
-          borderBottomWidth: 1,
-          borderBottomColor: "#EEF1F5",
-        }}
-      >
-        <View
-          style={{
-            flexDirection: "row",
-            alignItems: "center",
-            justifyContent: "space-between",
-          }}
-        >
-          <View>
-            <Text
-              style={{
-                fontSize: 21,
-                fontWeight: "800",
-                color: "#111827",
-              }}
-            >
-              Un-onboarded Hospitals
-            </Text>
-
-            <View
-              style={{
-                flexDirection: "row",
-                alignItems: "center",
-                marginTop: 4,
-              }}
-            >
-              <Ionicons name="location-outline" size={13} color="#2563EB" />
-
-              <Text
-                style={{
-                  marginLeft: 3,
-                  fontSize: 12,
-                  color: "#6B7280",
-                }}
-              >
-                {district || "Location unavailable"}
-              </Text>
+    <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }} edges={["top"]}>
+      {/* Header + search */}
+      <View style={{ backgroundColor: colors.surface, paddingHorizontal: spacing.lg, paddingTop: spacing.sm, paddingBottom: spacing.md, borderBottomWidth: 1, borderBottomColor: colors.divider }}>
+        <View style={{ flexDirection: "row", alignItems: "center" }}>
+          <View style={{ flex: 1 }}>
+            <Text style={typography.title}>Find hospitals</Text>
+            <View style={{ flexDirection: "row", alignItems: "center", marginTop: 2, gap: 4 }}>
+              <Ionicons name="location" size={13} color={colors.brand} />
+              <Text style={[typography.caption, { color: colors.brand, fontWeight: "700" }]}>{district || "Your district"}</Text>
             </View>
           </View>
-
-          <Pressable
-            onPress={() => navigation.navigate("Bucket")}
-            style={{
-              width: 42,
-              height: 42,
-              borderRadius: 12,
-              backgroundColor: "#EAF2FF",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            <Ionicons name="briefcase-outline" size={21} color="#2563EB" />
-
-            {bucketCount > 0 && (
-              <View
-                style={{
-                  position: "absolute",
-                  right: -2,
-                  top: -2,
-                  width: 18,
-                  height: 18,
-                  borderRadius: 9,
-                  backgroundColor: "#EF4444",
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
-              >
-                <Text
-                  style={{
-                    color: "#fff",
-                    fontSize: 9,
-                    fontWeight: "800",
-                  }}
-                >
-                  {bucketCount}
-                </Text>
-              </View>
-            )}
-          </Pressable>
+          <HeaderIconButton icon="briefcase-outline" label="Open my bucket" badge={bucketCount} onPress={() => navigation.navigate("Bucket")} />
         </View>
-
-        <View
-          style={{
-            marginTop: 15,
-            height: 46,
-            backgroundColor: "#F7F9FC",
-            borderRadius: 12,
-            flexDirection: "row",
-            alignItems: "center",
-            paddingHorizontal: 13,
-            borderWidth: 1,
-            borderColor: "#E8EBF0",
-          }}
-        >
-          <Ionicons name="search-outline" size={19} color="#6B7280" />
-
+        <View style={{ flexDirection: "row", alignItems: "center", marginTop: spacing.md, backgroundColor: colors.surfaceMuted, borderRadius: radius.md, paddingHorizontal: spacing.md, height: 46 }}>
+          <Ionicons name="search" size={18} color={colors.muted} />
           <TextInput
             value={search}
             onChangeText={setSearch}
-            placeholder="Search hospitals..."
-            placeholderTextColor="#9CA3AF"
-            autoCapitalize="none"
-            style={{
-              flex: 1,
-              marginLeft: 9,
-              fontSize: 13,
-              color: "#111827",
-            }}
+            placeholder="Search by name, town or TNCERA no."
+            placeholderTextColor={colors.muted}
+            autoCorrect={false}
+            returnKeyType="search"
+            style={{ flex: 1, marginLeft: spacing.sm, fontSize: 14, color: colors.text }}
           />
-
-          {search.length > 0 && (
-            <Pressable onPress={() => setSearch("")}>
-              <Ionicons name="close-circle" size={19} color="#9CA3AF" />
+          {search ? (
+            <Pressable onPress={() => setSearch("")} hitSlop={10} accessibilityLabel="Clear search">
+              <Ionicons name="close-circle" size={18} color={colors.muted} />
             </Pressable>
-          )}
+          ) : null}
         </View>
       </View>
 
-      {error ? (
-        <View
-          style={{
-            flex: 1,
-            alignItems: "center",
-            paddingHorizontal: 30,
-            paddingVertical: 50,
-          }}
-        >
-          <Ionicons name="alert-circle-outline" size={40} color="#EF4444" />
-
-          <Text
-            style={{
-              marginTop: 12,
-              fontSize: 15,
-              fontWeight: "700",
-              color: "#111827",
-            }}
-          >
-            Unable to load hospitals
-          </Text>
-
-          <Text
-            style={{
-              marginTop: 5,
-              fontSize: 12,
-              color: "#6B7280",
-              textAlign: "center",
-            }}
-          >
-            {error}
-          </Text>
-
-          <Pressable
-            onPress={() => {
-              hasLoadedHospitals.current = false;
-              loadHospitals();
-            }}
-            style={{
-              marginTop: 15,
-              backgroundColor: "#173FD1",
-              paddingHorizontal: 20,
-              paddingVertical: 10,
-              borderRadius: 9,
-            }}
-          >
-            <Text
-              style={{
-                color: "#fff",
-                fontSize: 12,
-                fontWeight: "700",
-              }}
-            >
-              Try Again
-            </Text>
-          </Pressable>
+      {loading ? (
+        <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
+          <ActivityIndicator size="large" color={colors.brand} />
+          <Text style={[typography.caption, { marginTop: spacing.md }]}>Loading hospitals…</Text>
         </View>
-      ) : loading ? (
-        <View
-          style={{
-            flex: 1,
-            alignItems: "center",
-            justifyContent: "center",
-          }}
-        >
-          <ActivityIndicator size="small" color="#173FD1" />
-          <Text
-            style={{
-              marginTop: 10,
-              fontSize: 13,
-              color: "#6B7280",
-            }}
-          >
-            Loading hospitals...
-          </Text>
-        </View>
+      ) : loadError ? (
+        <EmptyState
+          icon="cloud-offline-outline"
+          title="Couldn't load hospitals"
+          message={loadError}
+          actionLabel="Try again"
+          onAction={() => { hasLoadedHospitals.current = false; loadHospitals(); }}
+        />
       ) : (
         <FlatList
-          data={filteredHospitals}
-          keyExtractor={(item, index) =>
-            String(item.hospitalPoolId || item.serialNo || index)
-          }
+          data={filtered}
+          keyExtractor={(item, index) => String(item.hospitalPoolId || index)}
           renderItem={renderHospital}
-          ListHeaderComponent={listHeader}
+          extraData={selected}
+          ListHeaderComponent={header}
+          initialNumToRender={12}
+          windowSize={7}
+          keyboardShouldPersistTaps="handled"
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => loadHospitals({ silent: true })} colors={[colors.brand]} tintColor={colors.brand} />}
           ListEmptyComponent={
-            <View
-              style={{
-                alignItems: "center",
-                paddingVertical: 60,
-              }}
-            >
-              <View
-                style={{
-                  width: 64,
-                  height: 64,
-                  borderRadius: 32,
-                  backgroundColor: "#EAF2FF",
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
-              >
-                <Ionicons name="search-outline" size={28} color="#2563EB" />
-              </View>
-
-              <Text
-                style={{
-                  marginTop: 14,
-                  fontSize: 16,
-                  fontWeight: "700",
-                  color: "#111827",
-                }}
-              >
-                No hospitals found
-              </Text>
-
-              <Text
-                style={{
-                  marginTop: 5,
-                  fontSize: 12,
-                  color: "#6B7280",
-                  textAlign: "center",
-                }}
-              >
-                Try searching with a different hospital name.
-              </Text>
-            </View>
+            search.trim() ? (
+              <EmptyState icon="search-outline" title="No matches" message={`Nothing matches "${search.trim()}". Try a shorter name or the town.`} actionLabel="Clear search" onAction={() => setSearch("")} />
+            ) : (
+              <EmptyState icon="business-outline" title="No hospitals available" message={`There are no un-onboarded hospitals${district ? ` in ${district}` : ""} right now. Pull down to refresh.`} />
+            )
           }
           showsVerticalScrollIndicator={false}
-          contentContainerStyle={{
-            paddingHorizontal: 16,
-            paddingBottom:
-              25 + insets.bottom + (selectedHospitals.length > 0 ? 75 : 0),
-          }}
-          initialNumToRender={12}
-          maxToRenderPerBatch={12}
-          windowSize={7}
-          updateCellsBatchingPeriod={40}
-          removeClippedSubviews
+          contentContainerStyle={{ paddingHorizontal: spacing.lg, paddingBottom: spacing.xl + (selected.length ? 96 : 0) }}
         />
       )}
 
-      {selectedHospitals.length > 0 && (
+      {/* Selection bar */}
+      {selected.length > 0 ? (
         <View
           style={{
             position: "absolute",
-            left: 16,
-            right: 16,
-            bottom: 12 + insets.bottom,
+            left: spacing.lg,
+            right: spacing.lg,
+            bottom: spacing.md,
+            backgroundColor: colors.text,
+            borderRadius: radius.xl,
+            padding: spacing.md,
+            paddingLeft: spacing.lg,
+            flexDirection: "row",
+            alignItems: "center",
+            ...shadow.floating,
           }}
         >
-          <Pressable
-            onPress={handleDone}
-            disabled={saving}
-            style={{
-              height: 50,
-              borderRadius: 11,
-              backgroundColor: saving ? "#9CA3AF" : "#173FD1",
-              flexDirection: "row",
-              alignItems: "center",
-              paddingHorizontal: 16,
-            }}
-          >
-            <Text
-              style={{
-                flex: 1,
-                color: "#fff",
-                fontSize: 12,
-                fontWeight: "700",
-              }}
-            >
-              {saving
-                ? "Adding hospitals..."
-                : `${selectedHospitals.length} / ${availableSlots} selected`}
-            </Text>
-
-            <Text
-              style={{
-                color: "#fff",
-                fontSize: 12,
-                fontWeight: "700",
-              }}
-            >
-              {saving ? "Please wait" : "Done"}
-            </Text>
-
-            {!saving && (
-              <Ionicons
-                name="checkmark-circle-outline"
-                size={18}
-                color="#fff"
-                style={{ marginLeft: 6 }}
-              />
-            )}
-          </Pressable>
+          <View style={{ flex: 1 }}>
+            <Text style={{ color: colors.white, fontWeight: "800", fontSize: 15 }}>{selected.length} selected</Text>
+            <Pressable onPress={() => setSelected([])} hitSlop={8}>
+              <Text style={{ color: "#AEB9CF", fontSize: 12, marginTop: 2 }}>Clear selection</Text>
+            </Pressable>
+          </View>
+          <Button label="Add to bucket" icon="add-circle" onPress={addToBucket} loading={saving} compact style={{ paddingHorizontal: spacing.lg }} />
         </View>
-      )}
+      ) : null}
     </SafeAreaView>
   );
 }

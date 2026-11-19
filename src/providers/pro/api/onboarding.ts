@@ -73,6 +73,7 @@ export function updateProHospitalStatus(
   data: {
     status: string;
     reason?: string;
+    hospitalId?: string;
   },
 ) {
   return proApi(`/pro/hospital/${proHospitalId}`, {
@@ -102,6 +103,42 @@ export async function submitHospital(payload: any) {
   return data?.data ?? data;
 }
 
+/**
+ * Email the hospital a new claim code (the old one stops working). Only the PRO who onboarded the
+ * hospital may do this; the hospital service allows one resend a minute. Returns the hospital, whose
+ * `claimCodeSentTo` / `claimCodeExpiresAt` describe the new code.
+ */
+export async function resendHospitalClaimCode(hospitalId: string) {
+  const token = getAccessToken();
+  const userId = getAuthUserId();
+  if (!token || !userId) throw new Error("Please log in again.");
+  const response = await authFetch(`${HOSPITAL_API_URL}/api/v1/hospital/${encodeURIComponent(hospitalId)}/claim-code/resend`, {
+    method: "POST",
+    headers: { Accept: "application/json", Authorization: `Bearer ${token}`, "X-User-Id": userId, "X-User-Role": getAuthRole() || "PRO" },
+  });
+  const data = await response.json().catch(() => null);
+  if (!response.ok) {
+    const error: any = new Error(data?.message || data?.error?.message || `Couldn't resend the claim code (${response.status})`);
+    error.status = response.status;
+    throw error;
+  }
+  return data?.data ?? data;
+}
+
+/**
+ * The hospital API returns the full created hospital record (optionally wrapped
+ * in `data` / `hospital`). Pull its ID from whichever field the backend uses.
+ */
+export function extractHospitalId(response: any): string {
+  const candidates = [response, response?.data, response?.hospital, response?.data?.hospital];
+  for (const item of candidates) {
+    if (!item || typeof item !== "object") continue;
+    const id = item.hospitalId ?? item._id ?? item.id;
+    if (id !== undefined && id !== null && String(id).trim()) return String(id).trim();
+  }
+  return "";
+}
+
 export async function submitDoctor(payload: any) {
   const token = getAccessToken();
   const userId = getAuthUserId();
@@ -129,6 +166,16 @@ export async function getOnboardingMaster(path: "specialties" | "emergency-condi
   if (!response.ok) throw new Error(data?.message || `Unable to load ${path}`);
   const value = data?.data ?? data;
   return Array.isArray(value) ? value : Array.isArray(value?.items) ? value.items : [];
+}
+
+/** Whole years since a YYYY-MM-DD date of birth, or undefined if it isn't one. */
+export function ageFromDob(value: any, today = new Date()): number | undefined {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value || "").trim());
+  if (!match) return undefined;
+  const [y, m, d] = [Number(match[1]), Number(match[2]), Number(match[3])];
+  let age = today.getFullYear() - y;
+  if (today.getMonth() + 1 < m || (today.getMonth() + 1 === m && today.getDate() < d)) age -= 1;
+  return age >= 0 && age < 120 ? age : undefined;
 }
 
 function toNumber(value: any) {
@@ -280,8 +327,12 @@ export function buildDoctorPayload(form: any, hospitalId: string) {
   const emergencyConditions = toArrayWithOther(form.doctorEmergencyConditions, form.doctorEmergencyConditionsOther).filter((item) => hospitalEmergencyConditions.includes(item) || item === String(form.doctorEmergencyConditionsOther || "").trim());
   const qualifications = toArrayWithOther(form.doctorQualifications, form.doctorQualificationsOther);
   const fee = toNumber(form.doctorFee);
+  // The hospital service's DoctorRequest stores `age`, not a date of birth -
+  // a dateOfBirth field alone is silently dropped. Send both.
+  const age = ageFromDob(form.doctorDob);
   return {
     name: String(form.doctorName || "").trim(),
+    ...(age !== undefined ? { age } : {}),
     ...(String(form.doctorDob || "").trim() ? { dateOfBirth: String(form.doctorDob).trim() } : {}),
     sex: form.doctorSex,
     tnmcNumber: String(form.tnmcNumber || "").trim(),
