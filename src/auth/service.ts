@@ -270,6 +270,9 @@ export async function completeProviderLogin(
   }
 
   if (role === "PRO") {
+    // Keep the signed-in session available to ProRegistration (and authFetch)
+    // even if the screen is reached without route params.
+    setAuthSession({ accessToken, refreshToken, userId, role });
     setProUserId(userId);
 
     try {

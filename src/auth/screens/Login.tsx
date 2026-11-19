@@ -3,7 +3,7 @@ import {
   isErrorWithCode,
   statusCodes,
 } from "@react-native-google-signin/google-signin";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Pressable, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
@@ -18,14 +18,22 @@ GoogleSignin.configure({
     "407194530114-h4esr7s9me5ottchk29eks8gf7sdo4sb.apps.googleusercontent.com",
 });
 
-export default function Login({ navigation }: any) {
+export default function Login({ navigation, route }: any) {
   const { t } = useLanguage();
   const { setUser } = useAuth();
 
-  const [email, setEmail] = useState("");
+  const [email, setEmail] = useState<string>(route?.params?.email || "");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState<string>(route?.params?.notice || "");
+
+  // Register / Forgot password hand back the email (and a message) when they
+  // return here; the screen may already be mounted, so react to new params.
+  useEffect(() => {
+    if (route?.params?.email) setEmail(route.params.email);
+    if (route?.params?.notice) setNotice(route.params.notice);
+  }, [route?.params?.email, route?.params?.notice]);
 
   const handleLogin = async () => {
     if (!email.trim() || !password) {
@@ -36,6 +44,7 @@ export default function Login({ navigation }: any) {
     try {
       setLoading(true);
       setError("");
+      setNotice("");
 
       const result = await loginWithEmail(email.trim(), password);
 
@@ -236,6 +245,11 @@ export default function Login({ navigation }: any) {
           }}
         />
 
+        {/* Notice (e.g. password updated) */}
+        {notice && !error ? (
+          <Text style={{ marginTop: 10, color: "#067647" }}>{notice}</Text>
+        ) : null}
+
         {/* Error */}
         {error ? (
           <Text
@@ -250,7 +264,7 @@ export default function Login({ navigation }: any) {
 
         {/* Forgot Password */}
         <Pressable
-          onPress={() => navigation.navigate("ForgotPassword")}
+          onPress={() => navigation.navigate("ForgotPassword", { email: email.trim() })}
           disabled={loading}
           style={{
             alignSelf: "flex-end",

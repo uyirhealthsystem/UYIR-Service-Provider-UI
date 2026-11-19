@@ -55,10 +55,6 @@ export default function OTP({ route, navigation }: any) {
   const codeExpired = mode === "login" && Boolean(expiresAt) && expiresIn === 0;
 
   const verify = async (value = code) => {
-    if (mode === "register") {
-      navigation.replace("ProviderType");
-      return;
-    }
     if (submitting.current || expired) return;
     if (!challengeId) {
       setError("Sign-in session missing. Please log in again.");
@@ -122,45 +118,6 @@ export default function OTP({ route, navigation }: any) {
   };
 
   const backToLogin = () => navigation.goBack();
-
-  // Register mode is unchanged from before login OTP: registration doesn't
-  // send a code (Register.tsx doesn't call the API yet), so "Verify" just
-  // moves on to ProviderType.
-  if (mode === "register") {
-    return (
-      <SafeAreaView style={{ flex: 1, backgroundColor: "#fff" }}>
-        <View style={{ flex: 1, justifyContent: "center", padding: 24 }}>
-          <Pressable onPress={() => navigation.goBack()}>
-            <Text style={{ fontSize: 28 }}>‹</Text>
-          </Pressable>
-          <Text style={{ marginTop: 24, fontSize: 28, fontWeight: "700" }}>Verify your account</Text>
-          <Text style={{ marginTop: 8, color: "#6B7280", lineHeight: 21 }}>
-            Enter the verification code sent to your email.
-          </Text>
-          <TextInput
-            placeholder="Enter OTP"
-            keyboardType="number-pad"
-            maxLength={6}
-            style={{
-              marginTop: 28,
-              borderWidth: 1,
-              borderColor: "#E1E5EC",
-              borderRadius: 12,
-              padding: 16,
-              fontSize: 18,
-              letterSpacing: 5,
-            }}
-          />
-          <Pressable
-            onPress={() => verify()}
-            style={{ marginTop: 20, backgroundColor: "#173FD1", padding: 16, borderRadius: 12, alignItems: "center" }}
-          >
-            <Text style={{ color: "#fff", fontSize: 16, fontWeight: "700" }}>Verify</Text>
-          </Pressable>
-        </View>
-      </SafeAreaView>
-    );
-  }
 
   const canResend = !expired && !resending && resendIn === 0;
 
