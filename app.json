@@ -9,10 +9,7 @@
     "userInterfaceStyle": "automatic",
     "ios": {
       "bundleIdentifier": "com.uyir.serviceprovider",
-      "icon": "./assets/expo.icon",
-      "config": {
-        "googleMapsApiKey": "AIzaSyDAuQ2AcAut4_AFpYSD3CjYE0vURQk4Uwk"
-      }
+      "icon": "./assets/expo.icon"
     },
     "android": {
       "adaptiveIcon": {
@@ -23,11 +20,7 @@
       },
       "predictiveBackGestureEnabled": false,
       "package": "com.uyir.serviceprovider",
-      "config": {
-        "googleMaps": {
-          "apiKey": "AIzaSyDLj2eyb6i-Z_eDgLyFiNNujRN-G-ipCus"
-        }
-      }
+      "googleServicesFile": "./google-services.json"
     },
     "web": {
       "output": "single",
@@ -44,6 +37,14 @@
       ],
       "@react-native-google-signin/google-signin",
       "expo-secure-store",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/android-icon-monochrome.png",
+          "color": "#D92D20",
+          "sounds": ["./assets/sounds/offer_alarm.wav"]
+        }
+      ],
       [
         "expo-build-properties",
         {
