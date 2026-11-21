@@ -1,17 +1,18 @@
+import React, { lazy, Suspense } from "react";
+import { ActivityIndicator, Text, View } from "react-native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { useAuth } from "../auth/store";
-
-import AmbulanceRoutes from "../providers/ambulance/routes";
-import ECGOnWheelsRoutes from "../providers/ecg-on-wheels/routes";
-import HealthPartnerRoutes from "../providers/health-partner/routes";
-import HomeBasedCareRoutes from "../providers/home-based-care/routes";
-import HospitalRoutes from "../providers/hospital/routes";
-import LabCollectorRoutes from "../providers/lab-sample-collector/routes";
-import LaboratoryRoutes from "../providers/laboratory/routes";
-import ProRoutes from "../providers/pro/routes";
-import TeleconsultationRoutes from "../providers/teleconsultation/routes";
-
 import { ProProvider } from "../providers/pro/features/provider-state/store";
+
+const AmbulanceRoutes = lazy(() => import("../providers/ambulance/routes"));
+const ECGOnWheelsRoutes = lazy(() => import("../providers/ecg-on-wheels/routes"));
+const HealthPartnerRoutes = lazy(() => import("../providers/health-partner/routes"));
+const HomeBasedCareRoutes = lazy(() => import("../providers/home-based-care/routes"));
+const HospitalRoutes = lazy(() => import("../providers/hospital/routes"));
+const LabCollectorRoutes = lazy(() => import("../providers/lab-sample-collector/routes"));
+const LaboratoryRoutes = lazy(() => import("../providers/laboratory/routes"));
+const ProRoutes = lazy(() => import("../providers/pro/routes"));
+const TeleconsultationRoutes = lazy(() => import("../providers/teleconsultation/routes"));
 
 const Stack = createNativeStackNavigator();
 
@@ -76,10 +77,23 @@ export default function ProviderRoutes() {
     }
   };
 
+  const LazyRoutes = (
+    <Suspense
+      fallback={
+        <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
+          <ActivityIndicator />
+          <Text style={{ marginTop: 8 }}>Loading provider workspace…</Text>
+        </View>
+      }
+    >
+      {renderProviderRoutes()}
+    </Suspense>
+  );
+
   return (
     <ProProvider>
       <Stack.Navigator screenOptions={{ headerShown: false }}>
-        <Stack.Screen name="Provider" children={renderProviderRoutes} />
+        <Stack.Screen name="Provider">{() => LazyRoutes}</Stack.Screen>
       </Stack.Navigator>
     </ProProvider>
   );
