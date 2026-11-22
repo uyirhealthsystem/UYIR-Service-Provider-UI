@@ -13,6 +13,7 @@ import { setProUserId } from "../providers/pro/api/client";
 import { getMyProfile } from "../providers/pro/api/profile";
 import { getMyProfile as getHbcProfile } from "../providers/home-based-care/api/profile";
 import { setHbcUserId } from "../providers/home-based-care/api/client";
+import { getMyCollectorProfile } from "../providers/lab-sample-collector/api/collector";
 import { setAuthSession } from "./session";
 import { getUserIdFromAccessToken } from "./token";
 
@@ -270,8 +271,25 @@ export async function completeProviderLogin(
   }
 
   if (role === "LSC") {
-    // The supplied Lab & Scan collection defines POST /collector but no
-    // collector self-profile endpoint to reliably detect prior registration.
+    setAuthSession({ accessToken, refreshToken, userId, role });
+    try {
+      await getMyCollectorProfile();
+    } catch (checkError: any) {
+      const message = String(checkError?.message || "").toLowerCase();
+      if (
+        checkError?.status === 404 ||
+        /not found|does not exist|no collector profile|collector not found for this user/.test(message)
+      ) {
+        navigation.replace("CollectorRegistration", {
+          sub: userId,
+          role,
+          accessToken,
+          refreshToken,
+        });
+        return;
+      }
+      throw checkError;
+    }
   }
 
   if (role === "PRO") {

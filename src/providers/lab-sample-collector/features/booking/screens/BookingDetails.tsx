@@ -10,12 +10,15 @@ export default function BookingDetails({ route, navigation }: any) {
   const booking = activeBooking || requests.find(b => b.id === route.params?.bookingId) || requests[0];
   if (!booking) return null;
 
-  const accept = () => {
-    const result = acceptBooking(booking.id);
-    if (!result) return Alert.alert("Booking unavailable", "Complete your current collection before accepting another request.");
-    navigation.replace("LabCollectorBookingDetails", { bookingId: booking.id });
+  const accept = async () => {
+    try {
+      const result = await acceptBooking(booking.id);
+      navigation.replace("LabCollectorBookingDetails", { bookingId: result.id });
+    } catch (error: any) {
+      Alert.alert("Booking unavailable", error?.message || "Unable to accept this request.");
+    }
   };
-  const reject = () => { rejectBooking(booking.id); Alert.alert("Request Rejected", "The collection request has been rejected.", [{ text: "OK", onPress: () => navigation.goBack() }]); };
+  const reject = async () => { try { await rejectBooking(booking.id); Alert.alert("Request Rejected", "The collection request has been rejected.", [{ text: "OK", onPress: () => navigation.goBack() }]); } catch (error: any) { Alert.alert("Unable to reject", error?.message || "Please try again."); } };
   const goToPatient = () => { setStatus("REACHED"); navigation.navigate("LabCollectorBookingDetails", { bookingId: booking.id }); };
 
   return <SafeAreaView style={{ flex: 1, backgroundColor: BG }} edges={["top"]}><Header title="Booking Details" onBack={() => navigation.goBack()} />

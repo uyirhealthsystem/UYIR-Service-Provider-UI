@@ -62,7 +62,6 @@ export default function LaboratoryRegistration({ navigation }: any) {
     phone: "",
     address: "",
     districtId: "",
-    status: "ACTIVE",
   });
   const [loading, L] = useState(false);
   const [error, E] = useState("");

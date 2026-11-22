@@ -6,25 +6,25 @@ const BG = "#F5F8FC", BLUE = "#1473E6", GREEN = "#159447", MUTED = "#758096", TE
 import { useLabSampleCollector } from "../../provider-state/store";
 
 export default function Home({ navigation }: any) {
-  const { requests, activeBooking } = useLabSampleCollector();
+  const { requests, activeBooking, profile, dashboard, loading, refresh } = useLabSampleCollector();
   const current = activeBooking;
   const open = requests.length;
 
   return <SafeAreaView style={{ flex: 1, backgroundColor: BG }} edges={["top"]}>
     <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 35 }}>
       <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-        <View><Text style={{ color: TEXT, fontSize: 23, fontWeight: "900" }}>Hi, Arun 👋</Text><Text style={{ color: MUTED, fontSize: 11, marginTop: 3 }}>Ready for sample collection today?</Text></View>
+        <View><Text style={{ color: TEXT, fontSize: 23, fontWeight: "900" }}>Hi, {profile?.name?.split(" ")[0] || "Collector"} 👋</Text><Text style={{ color: MUTED, fontSize: 11, marginTop: 3 }}>{profile?.collectorType === "INDEPENDENT" ? "Independent sample collector" : "Laboratory sample collector"}</Text></View>
         <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: "#fff", alignItems: "center", justifyContent: "center" }}><Ionicons name="notifications-outline" size={21} color={TEXT} /></View>
       </View>
 
       <View style={{ marginTop: 16, backgroundColor: "#fff", borderRadius: 16, padding: 14, flexDirection: "row", alignItems: "center", borderWidth: 1, borderColor: "#E8ECF3" }}>
         <View style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: "#E6F8EE", alignItems: "center", justifyContent: "center" }}><View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: GREEN }} /></View>
-        <View style={{ flex: 1, marginLeft: 10 }}><Text style={{ color: TEXT, fontSize: 12, fontWeight: "900" }}>{current ? "On a collection" : "You are Online"}</Text><Text style={{ color: MUTED, fontSize: 10, marginTop: 3 }}>{current ? "Finish the current job to receive another" : "You will receive new collection requests"}</Text></View>
+        <View style={{ flex: 1, marginLeft: 10 }}><Text style={{ color: TEXT, fontSize: 12, fontWeight: "900" }}>{profile?.isAvailable ? "You are available" : "You are offline"}</Text><Text style={{ color: MUTED, fontSize: 10, marginTop: 3 }}>{current ? "Finish the current job to receive another" : profile?.isAvailable ? "You will receive eligible collection requests" : "Update location and availability from Profile"}</Text></View>
         <View style={{ width: 45, height: 25, borderRadius: 14, backgroundColor: BLUE, padding: 3, justifyContent: "center" }}><View style={{ width: 19, height: 19, borderRadius: 10, backgroundColor: "#fff", alignSelf: "flex-end" }} /></View>
       </View>
 
       <View style={{ flexDirection: "row", gap: 9, marginTop: 12 }}>
-        {[{ n: current ? "1" : "0", l: "Active" }, { n: "4", l: "Completed" }, { n: "₹1,250", l: "Earnings" }].map(x => <View key={x.l} style={{ flex: 1, backgroundColor: "#fff", borderRadius: 14, padding: 13, borderWidth: 1, borderColor: "#E8ECF3" }}><Text style={{ color: BLUE, fontSize: 17, fontWeight: "900" }}>{x.n}</Text><Text style={{ color: MUTED, fontSize: 9.5, marginTop: 3 }}>{x.l}</Text></View>)}
+        {[{ n: String(dashboard?.collections?.active ?? 0), l: "Active" }, { n: String(dashboard?.collections?.completed ?? 0), l: "Completed" }, { n: String(dashboard?.bookings?.pendingOffers ?? 0), l: "Offers" }].map(x => <View key={x.l} style={{ flex: 1, backgroundColor: "#fff", borderRadius: 14, padding: 13, borderWidth: 1, borderColor: "#E8ECF3" }}><Text style={{ color: BLUE, fontSize: 17, fontWeight: "900" }}>{x.n}</Text><Text style={{ color: MUTED, fontSize: 9.5, marginTop: 3 }}>{x.l}</Text></View>)}
       </View>
 
       {current ? <View style={{ marginTop: 18 }}><Text style={{ color: TEXT, fontSize: 16, fontWeight: "900", marginBottom: 10 }}>Current Collection</Text><BookingCard booking={current} onPress={() => navigation.navigate("LabCollectorBookingDetails", { bookingId: current.id })} /></View> : null}
