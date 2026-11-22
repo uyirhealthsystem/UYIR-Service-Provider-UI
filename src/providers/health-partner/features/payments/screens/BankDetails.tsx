@@ -1,49 +1,149 @@
-import { Ionicons } from "@expo/vector-icons";
-import { useFocusEffect } from "@react-navigation/native";
-import { useCallback, useState } from "react";
-import { ActivityIndicator, Alert, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { useState } from "react";
+import { Alert } from "react-native";
+
 import { saveBankAccount } from "../../../api/payments";
-import { getProfile } from "../../../api/profile";
+import { spacing } from "../../../theme";
+import { Banner, Button, Card, ErrorBanner, Field, Screen, ScreenHeader } from "../../../ui/components";
+
+// POST /payments/bank upserts the single bank account used for withdrawals.
+// The HP service has no "read bank account" endpoint, so the form always
+// starts empty and saving replaces whatever was stored before.
+
+const IFSC = /^[A-Z]{4}0[A-Z0-9]{6}$/;
+
+type Errors = Partial<Record<"name" | "account" | "confirm" | "ifsc" | "bank", string>>;
 
 export default function BankDetails({ navigation }: any) {
   const [accountHolderName, setAccountHolderName] = useState("");
   const [accountNumber, setAccountNumber] = useState("");
+  const [confirmNumber, setConfirmNumber] = useState("");
   const [ifscCode, setIfscCode] = useState("");
   const [bankName, setBankName] = useState("");
+  const [errors, setErrors] = useState<Errors>({});
+  const [serverError, setServerError] = useState("");
   const [saving, setSaving] = useState(false);
 
-  useFocusEffect(useCallback(() => {
-    getProfile().catch(() => null);
-  }, []));
+  const validate = (): Errors => {
+    const next: Errors = {};
+    if (!accountHolderName.trim()) next.name = "Enter the name exactly as on your bank account.";
+    if (!/^\d{9,18}$/.test(accountNumber)) next.account = "Account numbers are 9 to 18 digits.";
+    if (confirmNumber !== accountNumber) next.confirm = "Account numbers don't match.";
+    if (!IFSC.test(ifscCode)) next.ifsc = "IFSC is 11 characters, like SBIN0001234.";
+    if (!bankName.trim()) next.bank = "Enter your bank's name.";
+    return next;
+  };
 
   const save = async () => {
-    if (!accountHolderName || !accountNumber || !ifscCode || !bankName) {
-      Alert.alert("Missing details", "Please fill all bank details.");
-      return;
-    }
+    const next = validate();
+    setErrors(next);
+    if (Object.keys(next).length) return;
+
     try {
       setSaving(true);
-      await saveBankAccount({ accountHolderName, accountNumber, ifscCode: ifscCode.toUpperCase(), bankName });
-      Alert.alert("Saved", "Bank account saved successfully.");
+      setServerError("");
+      await saveBankAccount({
+        accountHolderName: accountHolderName.trim(),
+        accountNumber,
+        ifscCode,
+        bankName: bankName.trim(),
+      });
+      Alert.alert("Bank account saved", "Your withdrawals will be sent to this account.", [
+        { text: "OK", onPress: () => navigation.goBack() },
+      ]);
     } catch (error: any) {
-      Alert.alert("Unable to save", error?.message || "Please try again.");
+      setServerError(error?.message || "Unable to save. Please try again.");
     } finally {
       setSaving(false);
     }
   };
 
-  const input = (value: string, setter: (value: string) => void, placeholder: string, keyboardType: any = "default") => <TextInput value={value} onChangeText={setter} placeholder={placeholder} placeholderTextColor="#98A2B3" keyboardType={keyboardType} style={{ marginTop: 8, minHeight: 50, borderWidth: 1, borderColor: "#E4E7EC", borderRadius: 13, paddingHorizontal: 14, color: "#101828", fontSize: 13 }} />;
+  const clear = (key: keyof Errors) => errors[key] && setErrors((prev) => ({ ...prev, [key]: undefined }));
 
-  return <ScrollView style={{ flex: 1, backgroundColor: "#F5F7FB" }} contentContainerStyle={{ padding: 20, paddingBottom: 40 }}>
-    <Pressable onPress={() => navigation.goBack()} style={{ width: 40, height: 40, borderRadius: 12, backgroundColor: "#FFFFFF", alignItems: "center", justifyContent: "center" }}><Ionicons name="arrow-back" size={21} color="#101828" /></Pressable>
-    <Text style={{ marginTop: 22, color: "#101828", fontSize: 26, fontWeight: "900" }}>Bank Details</Text>
-    <Text style={{ marginTop: 5, color: "#667085", fontSize: 13 }}>Add the account used for withdrawals.</Text>
-    <View style={{ marginTop: 20, backgroundColor: "#FFFFFF", borderRadius: 19, padding: 18 }}>
-      <Text style={{ color: "#344054", fontSize: 12, fontWeight: "700" }}>Account Holder Name</Text>{input(accountHolderName, setAccountHolderName, "Name as per bank account")}
-      <Text style={{ marginTop: 17, color: "#344054", fontSize: 12, fontWeight: "700" }}>Account Number</Text>{input(accountNumber, setAccountNumber, "Enter account number", "number-pad")}
-      <Text style={{ marginTop: 17, color: "#344054", fontSize: 12, fontWeight: "700" }}>IFSC Code</Text>{input(ifscCode, setIfscCode, "Example: SBIN0001234")}
-      <Text style={{ marginTop: 17, color: "#344054", fontSize: 12, fontWeight: "700" }}>Bank Name</Text>{input(bankName, setBankName, "Bank name")}
-      <Pressable onPress={save} disabled={saving} style={{ marginTop: 22, minHeight: 52, borderRadius: 13, backgroundColor: "#1755E8", alignItems: "center", justifyContent: "center" }}>{saving ? <ActivityIndicator color="#FFFFFF" /> : <Text style={{ color: "#FFFFFF", fontWeight: "800" }}>Save Bank Account</Text>}</Pressable>
-    </View>
-  </ScrollView>;
+  return (
+    <Screen footer={<Button label="Save bank account" icon="shield-checkmark-outline" onPress={save} loading={saving} />}>
+      <ScreenHeader title="Bank account" subtitle="Withdrawals from your wallet are sent here." onBack={() => navigation.goBack()} />
+
+      <Banner
+        tone="blue"
+        icon="lock-closed-outline"
+        message="For your security, saved details are not shown again. Saving replaces your previous account."
+        style={{ marginBottom: spacing.lg }}
+      />
+      {serverError ? <ErrorBanner message={serverError} /> : null}
+
+      <Card>
+        <Field
+          label="Account holder name"
+          required
+          icon="person-outline"
+          value={accountHolderName}
+          onChangeText={(t) => {
+            setAccountHolderName(t);
+            clear("name");
+          }}
+          placeholder="Name as per bank records"
+          autoCapitalize="words"
+          error={errors.name}
+        />
+        <Field
+          label="Account number"
+          required
+          icon="card-outline"
+          value={accountNumber}
+          onChangeText={(t) => {
+            setAccountNumber(t.replace(/\D/g, ""));
+            clear("account");
+          }}
+          placeholder="Enter account number"
+          keyboardType="number-pad"
+          maxLength={18}
+          secureTextEntry
+          error={errors.account}
+        />
+        <Field
+          label="Confirm account number"
+          required
+          icon="card-outline"
+          value={confirmNumber}
+          onChangeText={(t) => {
+            setConfirmNumber(t.replace(/\D/g, ""));
+            clear("confirm");
+          }}
+          placeholder="Re-enter account number"
+          keyboardType="number-pad"
+          maxLength={18}
+          error={errors.confirm}
+        />
+        <Field
+          label="IFSC code"
+          required
+          icon="business-outline"
+          value={ifscCode}
+          onChangeText={(t) => {
+            setIfscCode(t.toUpperCase().replace(/[^A-Z0-9]/g, ""));
+            clear("ifsc");
+          }}
+          placeholder="SBIN0001234"
+          autoCapitalize="characters"
+          autoCorrect={false}
+          maxLength={11}
+          error={errors.ifsc}
+          hint="Printed on your passbook or cheque book."
+        />
+        <Field
+          label="Bank name"
+          required
+          icon="library-outline"
+          value={bankName}
+          onChangeText={(t) => {
+            setBankName(t);
+            clear("bank");
+          }}
+          placeholder="e.g. State Bank of India"
+          autoCapitalize="words"
+          error={errors.bank}
+        />
+      </Card>
+    </Screen>
+  );
 }

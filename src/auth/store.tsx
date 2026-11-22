@@ -8,6 +8,7 @@ import {
   getAccessToken,
   getAuthUserId,
   getRefreshToken,
+  notifyLogout,
   onSessionExpired,
   onTokensRefreshed,
   revokeSession,
@@ -82,6 +83,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const logout = () => {
+    notifyLogout(); // first: listeners may still need the access token
     revokeSession(getRefreshToken()); // tell the server; don't wait for it
     clearAuthSession();
     clearProviderIds();

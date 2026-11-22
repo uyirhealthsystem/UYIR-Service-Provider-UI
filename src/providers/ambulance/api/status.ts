@@ -1,22 +1,19 @@
+import type {
+  DriverLocationRequest,
+  DriverStatus,
+  DriverStatusRequest,
+} from "../types";
 import { ambulanceApi } from "./client";
 
-export function updateDriverStatus(data: {
-  online: boolean;
-  lat?: number;
-  lng?: number;
-}) {
-  return ambulanceApi("/driver/status", {
+export function updateDriverStatus(data: DriverStatusRequest) {
+  return ambulanceApi<{ status: DriverStatus }>("/driver/status", {
     method: "POST",
     body: JSON.stringify(data),
   });
 }
 
-export function sendDriverLocation(data: {
-  lat: number;
-  lng: number;
-  heading?: number;
-}) {
-  return ambulanceApi("/driver/location", {
+export function sendDriverLocation(data: DriverLocationRequest) {
+  return ambulanceApi<{ ok: boolean }>("/driver/location", {
     method: "POST",
     body: JSON.stringify(data),
   });

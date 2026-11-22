@@ -6,6 +6,9 @@ const enc = encodeURIComponent;
 /* ───────────── Hospital profile ───────────── */
 export const getHospitalProfile = (hospitalId: string) => hospitalApi<any>(`/${enc(hospitalId)}`);
 export const getMyHospital = () => hospitalApi<any>("/me");
+// Links this HOSPITAL login to a hospital a PRO onboarded, using the id + one-time claim code from the email.
+export const claimHospital = (hospitalId: string, claimCode: string) =>
+  hospitalApi<any>("/claim", { method: "POST", body: json({ hospitalId: hospitalId.trim(), claimCode: claimCode.trim() }) });
 export const toggleEmergencyServices = (hospitalId: string, handlesEmergencies: boolean) =>
   hospitalApi<any>(`/${enc(hospitalId)}/emergency-services/toggle`, { method: "PATCH", body: json({ handlesEmergencies }) });
 

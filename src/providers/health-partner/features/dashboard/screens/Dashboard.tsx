@@ -1,44 +1,69 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "@react-navigation/native";
-import { useCallback, useState } from "react";
-import {
-  ActivityIndicator,
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  Share,
-  Text,
-  View,
-} from "react-native";
+import { useCallback, useRef, useState } from "react";
+import { Pressable, Text, View } from "react-native";
 
 import { getDashboard } from "../../../api/healthPartner";
-import { getProfile } from "../../../api/profile";
+import { getReferrals } from "../../../api/referrals";
+import { colors, HP_RULES, spacing, typography } from "../../../theme";
+import {
+  Avatar,
+  Banner,
+  Card,
+  ErrorBanner,
+  IconBadge,
+  LoadingView,
+  Pill,
+  ReferralCodeCard,
+  Screen,
+  SectionHeader,
+  StatTile,
+  type IconName,
+  type Tone,
+} from "../../../ui/components";
+import {
+  formatDate,
+  greeting,
+  initials,
+  listFrom,
+  money,
+  REFERRAL_STATUS,
+  referralStatus,
+  referralType,
+  shortId,
+} from "../../../ui/format";
 
-const BLUE = "#1755E8";
-const DARK = "#101828";
-const MUTED = "#667085";
-const BG = "#F5F7FB";
+// Home: the referral code front and centre, how referrals are going, the
+// wallet, and the latest few referrals. Two calls:
+//   GET /health-partners/dashboard -> { fullName, referralCode, totalReferrals
+//     (completed), pendingReferrals, totalEarnings, walletBalance, status }
+//   GET /referrals -> newest first
 
 export default function Dashboard({ navigation }: any) {
   const [dashboard, setDashboard] = useState<any>(null);
-  const [profile, setProfile] = useState<any>(null);
+  const [recent, setRecent] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
+  const loaded = useRef(false);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (pull = false) => {
     try {
+      if (pull) setRefreshing(true);
       setError("");
-      const [dashboardData, profileData] = await Promise.all([
+      const [dashboardData, referralData] = await Promise.all([
         getDashboard(),
-        getProfile(),
+        getReferrals().catch(() => null),
       ]);
       setDashboard(dashboardData);
-      setProfile(profileData);
+      if (referralData) setRecent(listFrom(referralData).slice(0, 3));
+      loaded.current = true;
     } catch (loadError: any) {
       console.log("HP dashboard error:", loadError);
-      setError(loadError?.message || "Unable to load dashboard");
+      setError(loadError?.message || "Unable to load your dashboard.");
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }, []);
 
@@ -48,411 +73,185 @@ export default function Dashboard({ navigation }: any) {
     }, [load]),
   );
 
-  const shareCode = async () => {
-    const code = dashboard?.referralCode || profile?.referralCode;
-    if (!code) return;
+  if (loading && !loaded.current) return <LoadingView label="Loading your dashboard..." />;
 
-    await Share.share({
-      message: `Join Uyir using my Health Partner referral code ${code}.`,
-    });
-  };
-
-  if (loading && !dashboard) {
-    return (
-      <View
-        style={{
-          flex: 1,
-          alignItems: "center",
-          justifyContent: "center",
-          backgroundColor: BG,
-        }}
-      >
-        <ActivityIndicator size="large" color={BLUE} />
-      </View>
-    );
-  }
-
-  const referralCode = dashboard?.referralCode || profile?.referralCode || "-";
-  const totalReferrals = dashboard?.totalReferrals ?? 0;
-  const totalEarnings = dashboard?.totalEarnings ?? "0.00";
-  const walletBalance = dashboard?.walletBalance ?? "0.00";
-  const firstName = String(profile?.fullName || "Health Partner").split(" ")[0];
+  const name = String(dashboard?.fullName || "Health Partner");
+  const firstName = name.split(" ")[0];
+  const code = dashboard?.referralCode;
+  const completed = Number(dashboard?.totalReferrals ?? 0);
+  const pending = Number(dashboard?.pendingReferrals ?? 0);
+  const inactive = String(dashboard?.status || "").toUpperCase() === "INACTIVE";
 
   return (
-    <ScrollView
-      style={{ flex: 1, backgroundColor: BG }}
-      refreshControl={<RefreshControl refreshing={loading} onRefresh={load} />}
-      contentContainerStyle={{ padding: 20, paddingTop: 18, paddingBottom: 36 }}
-      showsVerticalScrollIndicator={false}
-    >
-      <View
-        style={{
-          flexDirection: "row",
-          justifyContent: "space-between",
-          alignItems: "center",
-        }}
-      >
-        <View>
-          <Text
-            style={{
-              color: BLUE,
-              fontSize: 20,
-              fontWeight: "900",
-              letterSpacing: -0.5,
-            }}
-          >
-            Uyir
-          </Text>
-          <Text style={{ color: MUTED, fontSize: 11, marginTop: -2 }}>
-            Health Partner
+    <Screen onRefresh={() => load(true)} refreshing={refreshing}>
+      {/* Header */}
+      <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md }}>
+        <View style={{ flex: 1 }}>
+          <Text style={typography.caption}>{greeting()},</Text>
+          <Text style={[typography.display, { marginTop: 2 }]} numberOfLines={1}>
+            {firstName}
           </Text>
         </View>
-        <View
-          style={{
-            width: 40,
-            height: 40,
-            borderRadius: 20,
-            backgroundColor: "#EAF0FF",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
-        >
-          <Ionicons name="notifications-outline" size={21} color={BLUE} />
-        </View>
+        <Pressable onPress={() => navigation.navigate("Profile")} accessibilityRole="button" accessibilityLabel="Open profile">
+          <Avatar label={initials(name)} size={46} />
+        </Pressable>
+      </View>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, marginTop: spacing.sm, marginBottom: spacing.lg }}>
+        <Pill label="Health Partner" tone="brand" icon="shield-checkmark" />
+        {inactive ? <Pill label="Inactive" tone="neutral" /> : null}
       </View>
 
-      <Text
-        style={{ marginTop: 25, color: DARK, fontSize: 25, fontWeight: "800" }}
-      >
-        Hi, {firstName} 👋
-      </Text>
-      <Text style={{ marginTop: 5, color: MUTED, fontSize: 14 }}>
-        Refer people. Help them access healthcare.
-      </Text>
-
-      {error ? (
-        <View
-          style={{
-            marginTop: 14,
-            backgroundColor: "#FFF0F0",
-            borderRadius: 12,
-            padding: 12,
-          }}
-        >
-          <Text style={{ color: "#D92D20", fontSize: 13 }}>{error}</Text>
-        </View>
+      {error ? <ErrorBanner message={error} onRetry={() => load(true)} /> : null}
+      {inactive ? (
+        <Banner
+          tone="amber"
+          message="Your account is inactive. New Health Partners can't sign up with your code until it's active again."
+          style={{ marginBottom: spacing.md }}
+        />
       ) : null}
 
-      <View
-        style={{
-          marginTop: 20,
-          backgroundColor: BLUE,
-          borderRadius: 22,
-          padding: 20,
-          overflow: "hidden",
-        }}
-      >
-        <View
-          style={{
-            flexDirection: "row",
-            justifyContent: "space-between",
-            alignItems: "flex-start",
-          }}
-        >
-          <View>
-            <Text style={{ color: "#DCE6FF", fontSize: 12, fontWeight: "600" }}>
-              YOUR REFERRAL CODE
-            </Text>
-            <Text
-              style={{
-                color: "#FFFFFF",
-                fontSize: 29,
-                fontWeight: "900",
-                letterSpacing: 1.2,
-                marginTop: 8,
-              }}
-            >
-              {referralCode}
-            </Text>
-          </View>
-          <Pressable
-            onPress={shareCode}
-            style={{
-              width: 42,
-              height: 42,
-              borderRadius: 13,
-              backgroundColor: "rgba(255,255,255,0.18)",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            <Ionicons name="share-social-outline" size={20} color="#FFFFFF" />
-          </Pressable>
-        </View>
-        <Text style={{ marginTop: 9, color: "#DCE6FF", fontSize: 12 }}>
-          Share your code and earn rewards on successful referrals.
-        </Text>
+      <ReferralCodeCard
+        code={code}
+        message={`Join Uyir and get easy access to healthcare. Use my Health Partner code ${code} when you create your profile.`}
+        caption={`Earn ${money(HP_RULES.rewardPerReferral, { decimals: 0 })} for every successful referral.`}
+      />
+
+      {/* Refer actions */}
+      <View style={{ flexDirection: "row", gap: spacing.md, marginTop: spacing.md }}>
+        <ActionCard
+          icon="person-add"
+          tone="brand"
+          title="Refer a citizen"
+          caption="Help a villager join Uyir"
+          onPress={() => navigation.navigate("ReferCitizen")}
+        />
+        <ActionCard
+          icon="people"
+          tone="blue"
+          title="Refer a partner"
+          caption="Grow the HP network"
+          onPress={() => navigation.navigate("ReferHealthPartner")}
+        />
       </View>
 
-      <View style={{ flexDirection: "row", gap: 12, marginTop: 14 }}>
-        <Pressable
-          onPress={() => navigation.getParent()?.navigate("ReferHealthPartner")}
-          style={{
-            flex: 1,
-            backgroundColor: "#EAF1FF",
-            borderRadius: 18,
-            padding: 16,
-          }}
-        >
-          <View
-            style={{
-              width: 38,
-              height: 38,
-              borderRadius: 12,
-              backgroundColor: "#D6E3FF",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            <Ionicons name="people-outline" size={21} color={BLUE} />
-          </View>
-          <Text
-            style={{
-              marginTop: 12,
-              color: DARK,
-              fontWeight: "800",
-              fontSize: 14,
-            }}
-          >
-            Refer Health Partner
-          </Text>
-          <Text
-            style={{ marginTop: 4, color: MUTED, fontSize: 11, lineHeight: 16 }}
-          >
-            Share your code
-          </Text>
-        </Pressable>
-        <Pressable
-          onPress={() => navigation.getParent()?.navigate("ReferCitizen")}
-          style={{
-            flex: 1,
-            backgroundColor: "#EAFBF4",
-            borderRadius: 18,
-            padding: 16,
-          }}
-        >
-          <View
-            style={{
-              width: 38,
-              height: 38,
-              borderRadius: 12,
-              backgroundColor: "#D2F6E6",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            <Ionicons name="phone-portrait-outline" size={21} color="#039855" />
-          </View>
-          <Text
-            style={{
-              marginTop: 12,
-              color: DARK,
-              fontWeight: "800",
-              fontSize: 14,
-            }}
-          >
-            Refer Citizen App
-          </Text>
-          <Text
-            style={{ marginTop: 4, color: MUTED, fontSize: 11, lineHeight: 16 }}
-          >
-            Help citizens get started
-          </Text>
-        </Pressable>
-      </View>
-
-      <View style={{ flexDirection: "row", gap: 10, marginTop: 16 }}>
-        <View
-          style={{
-            flex: 1,
-            backgroundColor: "#FFFFFF",
-            borderRadius: 16,
-            padding: 15,
-            borderWidth: 1,
-            borderColor: "#EEF1F6",
-          }}
-        >
-          <Text style={{ color: MUTED, fontSize: 12 }}>Total Referrals</Text>
-          <Text
-            style={{
-              marginTop: 7,
-              color: DARK,
-              fontSize: 23,
-              fontWeight: "900",
-            }}
-          >
-            {totalReferrals}
-          </Text>
-        </View>
-        <View
-          style={{
-            flex: 1,
-            backgroundColor: "#FFFFFF",
-            borderRadius: 16,
-            padding: 15,
-            borderWidth: 1,
-            borderColor: "#EEF1F6",
-          }}
-        >
-          <Text style={{ color: MUTED, fontSize: 12 }}>Total Earnings</Text>
-          <Text
-            style={{
-              marginTop: 7,
-              color: DARK,
-              fontSize: 23,
-              fontWeight: "900",
-            }}
-          >
-            ₹{totalEarnings}
-          </Text>
-        </View>
-      </View>
-
-      <View
-        style={{
-          marginTop: 10,
-          backgroundColor: "#FFFFFF",
-          borderRadius: 16,
-          padding: 17,
-          borderWidth: 1,
-          borderColor: "#EEF1F6",
-        }}
-      >
-        <View style={{ flexDirection: "row", alignItems: "center" }}>
-          <View
-            style={{
-              width: 40,
-              height: 40,
-              borderRadius: 12,
-              backgroundColor: "#FFF4E5",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            <Ionicons name="wallet-outline" size={20} color="#F79009" />
-          </View>
-          <View style={{ marginLeft: 12, flex: 1 }}>
-            <Text style={{ color: MUTED, fontSize: 12 }}>
-              Available Wallet Balance
-            </Text>
-            <Text
-              style={{
-                marginTop: 2,
-                color: DARK,
-                fontSize: 22,
-                fontWeight: "900",
-              }}
-            >
-              ₹{walletBalance}
-            </Text>
-          </View>
-          <Pressable onPress={() => navigation.navigate("Payments")}>
-            <Ionicons name="chevron-forward" size={20} color="#98A2B3" />
-          </Pressable>
-        </View>
-      </View>
-
-      <Pressable
-        onPress={shareCode}
-        style={{
-          marginTop: 16,
-          backgroundColor: "#FFF7E8",
-          borderRadius: 17,
-          padding: 16,
-          flexDirection: "row",
-          alignItems: "center",
-        }}
-      >
-        <View
-          style={{
-            width: 40,
-            height: 40,
-            borderRadius: 12,
-            backgroundColor: "#FFE8B2",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
-        >
-          <Ionicons name="gift-outline" size={21} color="#B54708" />
-        </View>
-        <View style={{ flex: 1, marginLeft: 12 }}>
-          <Text style={{ color: "#7A2E0E", fontWeight: "800", fontSize: 14 }}>
-            Refer more, earn more
-          </Text>
-          <Text style={{ color: "#925F3B", fontSize: 11, marginTop: 3 }}>
-            Share your referral code with people you know.
-          </Text>
-        </View>
-        <Ionicons name="chevron-forward" size={18} color="#B54708" />
-      </Pressable>
-
-      <Text
-        style={{ marginTop: 24, color: DARK, fontSize: 17, fontWeight: "800" }}
-      >
-        Quick Actions
-      </Text>
-      <View style={{ flexDirection: "row", gap: 10, marginTop: 10 }}>
-        <Pressable
+      {/* Stats */}
+      <SectionHeader title="Your progress" caption="Updated when you open this screen" />
+      <View style={{ flexDirection: "row", gap: spacing.md }}>
+        <StatTile
+          icon="checkmark-done"
+          tone="green"
+          label="Successful referrals"
+          value={completed}
           onPress={() => navigation.navigate("Referrals")}
-          style={{
-            flex: 1,
-            backgroundColor: "#FFFFFF",
-            borderRadius: 15,
-            padding: 15,
-            borderWidth: 1,
-            borderColor: "#EEF1F6",
-            flexDirection: "row",
-            alignItems: "center",
-          }}
-        >
-          <Ionicons name="list-outline" size={20} color={BLUE} />
-          <Text
-            style={{
-              marginLeft: 9,
-              color: DARK,
-              fontWeight: "700",
-              fontSize: 12,
-            }}
-          >
-            My Referrals
-          </Text>
-        </Pressable>
-        <Pressable
-          onPress={() => navigation.navigate("Payments")}
-          style={{
-            flex: 1,
-            backgroundColor: "#FFFFFF",
-            borderRadius: 15,
-            padding: 15,
-            borderWidth: 1,
-            borderColor: "#EEF1F6",
-            flexDirection: "row",
-            alignItems: "center",
-          }}
-        >
-          <Ionicons name="card-outline" size={20} color={BLUE} />
-          <Text
-            style={{
-              marginLeft: 9,
-              color: DARK,
-              fontWeight: "700",
-              fontSize: 12,
-            }}
-          >
-            Payments
-          </Text>
-        </Pressable>
+        />
+        <StatTile
+          icon="hourglass-outline"
+          tone="amber"
+          label="Awaiting ABHA link"
+          value={pending}
+          onPress={() => navigation.navigate("Referrals")}
+        />
       </View>
-    </ScrollView>
+      <View style={{ flexDirection: "row", gap: spacing.md, marginTop: spacing.md }}>
+        <StatTile icon="trending-up" tone="violet" label="Total earned" value={money(dashboard?.totalEarnings)} />
+        <StatTile
+          icon="wallet"
+          tone="brand"
+          label="Wallet balance"
+          value={money(dashboard?.walletBalance)}
+          hint="Withdraw"
+          onPress={() => navigation.navigate("Payments")}
+        />
+      </View>
+
+      {/* Recent referrals */}
+      <SectionHeader
+        title="Recent referrals"
+        actionLabel={recent.length ? "See all" : undefined}
+        onAction={() => navigation.navigate("Referrals")}
+      />
+      {recent.length ? (
+        <Card padded={false}>
+          {recent.map((item, index) => {
+            const status = REFERRAL_STATUS[referralStatus(item.status)];
+            const type = referralType(item.referredType);
+            return (
+              <Pressable
+                key={item.id || index}
+                onPress={() => navigation.navigate("ReferralDetails", { referral: item })}
+                accessibilityRole="button"
+                accessibilityLabel={`${type.label} referral, ${status.label}`}
+                style={({ pressed }) => ({
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: spacing.md,
+                  padding: spacing.lg,
+                  borderBottomWidth: index === recent.length - 1 ? 0 : 1,
+                  borderBottomColor: colors.divider,
+                  backgroundColor: pressed ? colors.surfaceMuted : colors.surface,
+                })}
+              >
+                <IconBadge icon={type.icon} tone={type.tone} size={38} />
+                <View style={{ flex: 1 }}>
+                  <Text style={typography.label}>
+                    {type.label} {shortId(item.referredUserId)}
+                  </Text>
+                  <Text style={[typography.caption, { marginTop: 2 }]}>{formatDate(item.createdAt)}</Text>
+                </View>
+                <Pill label={status.label} tone={status.tone} icon={status.icon} />
+              </Pressable>
+            );
+          })}
+        </Card>
+      ) : (
+        <Card>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md }}>
+            <IconBadge icon="sparkles-outline" tone="brand" />
+            <View style={{ flex: 1 }}>
+              <Text style={typography.label}>No referrals yet</Text>
+              <Text style={[typography.caption, { marginTop: 2, lineHeight: 17 }]}>
+                Share your code with families in your village. Their sign-ups will show up here.
+              </Text>
+            </View>
+          </View>
+        </Card>
+      )}
+
+      {/* How you earn */}
+      <Card style={{ marginTop: spacing.xl, backgroundColor: colors.brandSoft, borderColor: colors.brandSoft }}>
+        <View style={{ flexDirection: "row", gap: spacing.md }}>
+          <Ionicons name="information-circle" size={22} color={colors.brand} />
+          <View style={{ flex: 1 }}>
+            <Text style={[typography.label, { color: colors.brandDark }]}>How you earn</Text>
+            <Text style={[typography.body, { marginTop: 4, color: colors.brandDark }]}>
+              A citizen referral is paid once the person creates their profile with your code and links their ABHA. A
+              Health Partner referral is paid as soon as they register.
+            </Text>
+          </View>
+        </View>
+      </Card>
+    </Screen>
+  );
+}
+
+function ActionCard({
+  icon,
+  tone,
+  title,
+  caption,
+  onPress,
+}: {
+  icon: IconName;
+  tone: Tone;
+  title: string;
+  caption: string;
+  onPress: () => void;
+}) {
+  return (
+    <Card onPress={onPress} accessibilityLabel={title} style={{ flex: 1, padding: 14 }}>
+      <IconBadge icon={icon} tone={tone} size={40} />
+      <Text style={[typography.label, { marginTop: spacing.md }]}>{title}</Text>
+      <Text style={[typography.caption, { marginTop: 2 }]}>{caption}</Text>
+    </Card>
   );
 }

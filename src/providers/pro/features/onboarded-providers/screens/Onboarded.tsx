@@ -11,6 +11,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { getProHospitals } from "../../../api/hospitals";
+import { getHospitalById } from "../../../api/onboarding";
 import OnboardedCard from "../components/OnboardedCard";
 
 export default function Onboarded({ navigation }: any) {
@@ -37,9 +38,22 @@ export default function Onboarded({ navigation }: any) {
 
       console.log("Total hospitals:", data.length);
 
-      const onboarded = data
-        .filter((item: any) => item?.status === "ONBOARDED")
-        .map((item: any) => normalizeHospital(item));
+      // /pro/me/hospitals only returns ids - load each hospital that onboarding
+      // created so the list shows its real name, address and beds.
+      const rows = data.filter((item: any) => item?.status === "ONBOARDED");
+      const records = await Promise.all(
+        rows.map((item: any) =>
+          item?.hospitalId
+            ? getHospitalById(item.hospitalId).catch((e) => {
+                console.log("Hospital lookup failed:", item.hospitalId, e?.message);
+                return null;
+              })
+            : null,
+        ),
+      );
+      const onboarded = rows.map((item: any, i: number) =>
+        normalizeHospital(records[i] ? { ...item, hospital: records[i] } : item),
+      );
 
       console.log("Onboarded hospitals:", onboarded.length);
 
@@ -314,7 +328,7 @@ function normalizeHospital(item: any) {
     tags.push(hospital.hospitalType);
   }
 
-  if (hospital?.hospitalInsured === true) {
+  if (hospital?.operations?.hospitalInsured === true || hospital?.hospitalInsured === true) {
     tags.push("Insured");
   }
 
@@ -365,12 +379,8 @@ function getHospitalLocation(item: any) {
       .join(", ");
   }
 
-  return (
-    hospital?.district ||
-    pool?.districtId ||
-    item?.districtId ||
-    "Location unavailable"
-  );
+  // districtId is a UUID - never show it as a place.
+  return hospital?.address?.district || (item?.hospitalId ? "Address not available" : "Not onboarded through the form yet");
 }
 
 function formatDate(value: string) {

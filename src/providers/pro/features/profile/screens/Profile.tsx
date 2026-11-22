@@ -22,7 +22,7 @@ export default function Profile({ navigation }: any) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  const userId = user?.id || user?.userId || user?.sub;
+  const userId = user?.id || user?.sub;
 
   const loadProfile = async () => {
     if (!userId) {

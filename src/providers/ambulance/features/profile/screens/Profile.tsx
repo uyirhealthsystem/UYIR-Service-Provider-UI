@@ -1,135 +1,320 @@
-import { useCallback, useState } from "react";
 import { useFocusEffect } from "@react-navigation/native";
-import { Alert, ActivityIndicator, Modal, Pressable, ScrollView, Text, TextInput, View } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
+import { useCallback, useState } from "react";
+import { Alert, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+
 import { useAuth } from "../../../../../auth/store";
-import { getMyProfile } from "../../../api/profile";
-import { addTechnician, getMyTechnicians, removeTechnician, updateTechnician } from "../../../api/technicians";
+import { errorMessage } from "../../../api/errors";
+import { getMyProfile, updateMyProfile } from "../../../api/profile";
+import {
+  addTechnician,
+  getMyTechnicians,
+  removeTechnician,
+  updateTechnician,
+} from "../../../api/technicians";
+import { ambulanceTypeLabel, MAX_TECHNICIANS, type StatusTone } from "../../../domain/trip";
+import { colors, radius, spacing, typography } from "../../../theme";
+import type {
+  DriverProfile,
+  DriverProfileRequest,
+  DriverStatus,
+  Technician,
+  TechnicianRequest,
+} from "../../../types";
+import {
+  Badge,
+  Button,
+  Card,
+  EmptyState,
+  ErrorBanner,
+  IconButton,
+  InfoRow,
+  ScreenHeader,
+  SectionTitle,
+} from "../../../ui/components";
+import ProfileFormModal from "../components/ProfileFormModal";
+import TechnicianFormModal from "../components/TechnicianFormModal";
 
-type Technician = { id?: string; technicianId?: string; fullName: string; phone: string; qualification?: string; certificationNumber?: string; available?: boolean; [key: string]: any };
-const BLUE = "#1473E6", BG = "#F5F8FC", MUTED = "#6B7890", RED = "#E5484D", TEXT = "#10233F";
+const DRIVER_STATUS: Record<DriverStatus, { label: string; tone: StatusTone }> = {
+  AVAILABLE: { label: "Online", tone: "success" },
+  BUSY: { label: "On a trip", tone: "info" },
+  OFFLINE: { label: "Offline", tone: "neutral" },
+};
 
-export default function Profile({ route }: any) {
+function initials(name: string | undefined) {
+  const parts = (name ?? "").trim().split(/\s+/).filter(Boolean);
+  return parts.slice(0, 2).map((part) => part[0].toUpperCase()).join("") || "D";
+}
+
+export default function Profile() {
   const { logout } = useAuth();
-  const serviceType = route.params?.serviceType || "AMBULANCE";
-  const isAmbulance = serviceType === "AMBULANCE";
-  const [profile, setProfile] = useState<any>(null);
+
+  const [profile, setProfile] = useState<DriverProfile | null>(null);
   const [technicians, setTechnicians] = useState<Technician[]>([]);
-  const [techModal, setTechModal] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [fullName, setFullName] = useState("");
-  const [phone, setPhone] = useState("");
-  const [qualification, setQualification] = useState("");
-  const [certificationNumber, setCertificationNumber] = useState("");
+  const [loadError, setLoadError] = useState("");
+  const [refreshing, setRefreshing] = useState(false);
+  const [editingProfile, setEditingProfile] = useState(false);
+  const [profileError, setProfileError] = useState("");
+  const [technicianForm, setTechnicianForm] = useState<{ technician: Technician | null } | null>(
+    null,
+  );
   const [saving, setSaving] = useState(false);
 
-  const loadProfile = useCallback(async () => {
-    try {
-      const response = await getMyProfile();
-      const data = response?.data || response;
-      setProfile(data);
-    } catch (error) { console.log("AMBULANCE PROFILE ERROR:", error); }
+  const load = useCallback(async () => {
+    const [profileResult, techniciansResult] = await Promise.allSettled([
+      getMyProfile(),
+      getMyTechnicians(),
+    ]);
+    if (profileResult.status === "fulfilled") setProfile(profileResult.value);
+    if (techniciansResult.status === "fulfilled") setTechnicians(techniciansResult.value);
+
+    const failure = [profileResult, techniciansResult].find(
+      (result) => result.status === "rejected",
+    );
+    setLoadError(
+      failure?.status === "rejected"
+        ? errorMessage(failure.reason, "Unable to load your profile.")
+        : "",
+    );
+    setRefreshing(false);
   }, []);
 
-  const loadTechnicians = useCallback(async () => {
-    try {
-      const response = await getMyTechnicians();
-      const rows = Array.isArray(response) ? response : response?.data || response?.technicians || response?.items || [];
-      setTechnicians(Array.isArray(rows) ? rows : []);
-    } catch (error) { console.log("AMBULANCE TECHNICIANS ERROR:", error); }
-  }, []);
-
-  // Refresh technician status whenever the driver returns to this profile screen.
   useFocusEffect(
     useCallback(() => {
-      void loadProfile();
-      void loadTechnicians();
-    }, [loadProfile, loadTechnicians]),
+      void load();
+    }, [load]),
   );
 
-  function openTechnician(item?: Technician) {
-    setEditingId(item ? String(item.id || item.technicianId || "") : null);
-    setFullName(item?.fullName || "");
-    setPhone(item?.phone || "");
-    setQualification(item?.qualification || "");
-    setCertificationNumber(item?.certificationNumber || "");
-    setTechModal(true);
+  function openProfileForm() {
+    setProfileError("");
+    setEditingProfile(true);
   }
 
-  async function saveTechnician() {
-    if (!fullName.trim() || !phone.trim()) {
-      Alert.alert("Required details", "Enter the technician name and mobile number.");
-      return;
-    }
+  async function saveProfile(data: DriverProfileRequest) {
     try {
       setSaving(true);
-      const payload = { fullName: fullName.trim(), phone: phone.trim(), qualification: qualification.trim() || undefined, certificationNumber: certificationNumber.trim() || undefined };
-      if (editingId) await updateTechnician(editingId, { ...payload, available: technicians.find(t => String(t.id || t.technicianId) === editingId)?.available ?? false });
-      else await addTechnician(payload);
-      setTechModal(false);
-      await loadTechnicians();
-      Alert.alert("Saved", "Technician details have been saved.");
-    } catch (error: any) {
-      Alert.alert("Unable to save technician", error?.message || "Please try again.");
-    } finally { setSaving(false); }
+      setProfileError("");
+      setProfile(await updateMyProfile(data));
+      setEditingProfile(false);
+    } catch (error) {
+      setProfileError(errorMessage(error, "Unable to save your details."));
+    } finally {
+      setSaving(false);
+    }
   }
 
+  async function saveTechnician(data: TechnicianRequest) {
+    try {
+      setSaving(true);
+      if (technicianForm?.technician) await updateTechnician(technicianForm.technician.id, data);
+      else await addTechnician(data);
+      setTechnicianForm(null);
+      setTechnicians(await getMyTechnicians());
+    } catch (error) {
+      Alert.alert("Unable to save technician", errorMessage(error));
+    } finally {
+      setSaving(false);
+    }
+  }
 
-  function confirmRemove(item: Technician) {
-    const id = String(item.id || item.technicianId || "");
-    if (!id) return;
-    Alert.alert("Remove technician?", `Remove ${item.fullName} from this ambulance profile?`, [
+  function confirmRemove(technician: Technician) {
+    Alert.alert("Remove technician?", `Remove ${technician.fullName} from this ambulance?`, [
       { text: "Cancel", style: "cancel" },
-      { text: "Remove", style: "destructive", onPress: async () => {
-        try { await removeTechnician(id); await loadTechnicians(); }
-        catch (error: any) { Alert.alert("Unable to remove technician", error?.message || "Please try again."); }
-      } },
+      {
+        text: "Remove",
+        style: "destructive",
+        onPress: async () => {
+          try {
+            await removeTechnician(technician.id);
+            setTechnicians(await getMyTechnicians());
+          } catch (error) {
+            Alert.alert("Unable to remove technician", errorMessage(error));
+          }
+        },
+      },
     ]);
   }
 
+  const onTrip = profile?.status === "BUSY";
+  const status = profile ? DRIVER_STATUS[profile.status] : null;
+  const technicianLimitReached = technicians.length >= MAX_TECHNICIANS;
+
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: BG }} edges={["top"]}>
-      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 30 }}>
-        <Text style={{ color: TEXT, fontSize: 23, fontWeight: "900" }}>My Profile</Text>
-        <View style={{ marginTop: 16, backgroundColor: "#FFFFFF", borderRadius: 18, padding: 18, alignItems: "center" }}>
-          <View style={{ width: 74, height: 74, borderRadius: 37, backgroundColor: "#EAF3FF", alignItems: "center", justifyContent: "center" }}><Ionicons name="person" size={36} color={BLUE} /></View>
-          <Text style={{ color: TEXT, fontSize: 18, fontWeight: "900", marginTop: 10 }}>{profile?.fullName || "Provider"}</Text>
-          <Text style={{ color: MUTED, fontSize: 11, marginTop: 3 }}>Verified Provider</Text>
-        </View>
-        <Text style={{ color: TEXT, fontSize: 16, fontWeight: "900", marginTop: 12, marginBottom: 10 }}>Technicians</Text>
-        <View style={{ backgroundColor: "#FFFFFF", borderRadius: 16, padding: 15, marginBottom: 12 }}>
-          <View style={{ flexDirection: "row", alignItems: "center" }}>
-            <View style={{ flex: 1 }}><Text style={{ color: TEXT, fontSize: 14, fontWeight: "900" }}>Technician Details</Text><Text style={{ color: MUTED, fontSize: 11, marginTop: 4 }}>{technicians.length} registered</Text></View>
-            <Pressable onPress={() => openTechnician()} style={{ backgroundColor: BLUE, paddingHorizontal: 13, paddingVertical: 9, borderRadius: 10, flexDirection: "row", alignItems: "center" }}><Ionicons name="add" size={17} color="#fff" /><Text style={{ color: "#fff", fontSize: 12, fontWeight: "800", marginLeft: 4 }}>Add</Text></Pressable>
+    <SafeAreaView style={styles.page} edges={["top"]}>
+      <ScreenHeader title="Profile" />
+
+      <ScrollView
+        contentContainerStyle={styles.content}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => {
+              setRefreshing(true);
+              void load();
+            }}
+          />
+        }
+      >
+        {loadError ? <ErrorBanner message={loadError} /> : null}
+
+        <Card style={styles.identity}>
+          <View style={styles.avatar}>
+            <Text style={styles.avatarText}>{initials(profile?.fullName)}</Text>
           </View>
-          {technicians.length === 0 ? <Text style={{ color: MUTED, fontSize: 12, marginTop: 13, lineHeight: 18 }}>No technician details added yet. Add a technician when required.</Text> : technicians.map((item, index) => (
-            <View key={String(item.id || item.technicianId || `${item.phone}-${index}`)} style={{ borderTopWidth: 1, borderTopColor: "#EEF2F6", marginTop: 13, paddingTop: 13 }}>
-              <View style={{ flexDirection: "row", alignItems: "center" }}>
-                <View style={{ flex: 1 }}><Text style={{ color: TEXT, fontSize: 13, fontWeight: "900" }}>{item.fullName || "Technician"}</Text><Text style={{ color: MUTED, fontSize: 11, marginTop: 3 }}>{item.phone || "No mobile number"}{item.qualification ? ` · ${item.qualification}` : ""}</Text></View>
-                <View style={{ backgroundColor: item.available ? "#E7F8EF" : "#EEF2F6", paddingHorizontal: 10, paddingVertical: 7, borderRadius: 16 }}><Text style={{ color: item.available ? "#067647" : MUTED, fontSize: 10, fontWeight: "900" }}>{item.available ? "AVAILABLE" : "OFFLINE"}</Text></View>
+          <View style={styles.identityText}>
+            <Text style={typography.heading} numberOfLines={1}>
+              {profile?.fullName || "Driver"}
+            </Text>
+            <Text style={typography.body} numberOfLines={1}>
+              {profile?.phone || "No mobile number"}
+            </Text>
+          </View>
+          {status ? <Badge label={status.label} tone={status.tone} /> : null}
+        </Card>
+
+        <SectionTitle
+          title="Ambulance"
+          action={
+            <Button
+              title="Edit"
+              icon="create-outline"
+              variant="secondary"
+              compact
+              disabled={!profile || onTrip}
+              onPress={openProfileForm}
+            />
+          }
+        />
+        <Card style={styles.rows}>
+          <InfoRow
+            icon="car-outline"
+            label="Registration"
+            value={profile?.plateNumber || "Not available"}
+          />
+          <InfoRow
+            icon="medkit-outline"
+            label="Type"
+            value={profile ? ambulanceTypeLabel(profile.ambulanceType) : "Not available"}
+          />
+          <InfoRow
+            icon="card-outline"
+            label="Licence"
+            value={profile?.licenseNumber || "Not available"}
+          />
+          <InfoRow
+            icon="map-outline"
+            label="District"
+            value={profile?.districtId || "Not available"}
+            last
+          />
+        </Card>
+        {onTrip ? (
+          <Text style={styles.note}>You can edit these details after your current trip.</Text>
+        ) : null}
+
+        <SectionTitle
+          title={`Technicians (${technicians.length}/${MAX_TECHNICIANS})`}
+          action={
+            <Button
+              title="Add"
+              icon="add"
+              variant="secondary"
+              compact
+              disabled={technicianLimitReached}
+              onPress={() => setTechnicianForm({ technician: null })}
+            />
+          }
+        />
+        <Card style={styles.rows}>
+          {technicians.length === 0 ? (
+            <EmptyState
+              icon="people-outline"
+              title="No technicians added"
+              message="Add the technicians who work on this ambulance."
+            />
+          ) : (
+            technicians.map((technician, index) => (
+              <View
+                key={technician.id}
+                style={[
+                  styles.technician,
+                  index < technicians.length - 1 ? styles.technicianDivider : null,
+                ]}
+              >
+                <View style={styles.technicianText}>
+                  <Text style={typography.label} numberOfLines={1}>
+                    {technician.fullName}
+                  </Text>
+                  <Text style={typography.caption} numberOfLines={1}>
+                    {[technician.phone, technician.qualification].filter(Boolean).join(" · ")}
+                  </Text>
+                </View>
+                <IconButton
+                  icon="create-outline"
+                  label={`Edit ${technician.fullName}`}
+                  color={colors.blue}
+                  onPress={() => setTechnicianForm({ technician })}
+                />
+                <IconButton
+                  icon="trash-outline"
+                  label={`Remove ${technician.fullName}`}
+                  color={colors.red}
+                  onPress={() => confirmRemove(technician)}
+                />
               </View>
-              <View style={{ flexDirection: "row", marginTop: 10, gap: 9 }}>
-                <Pressable onPress={() => openTechnician(item)} style={{ flexDirection: "row", alignItems: "center", paddingVertical: 7, paddingHorizontal: 10, borderRadius: 8, backgroundColor: "#EAF3FF" }}><Ionicons name="create-outline" size={15} color={BLUE} /><Text style={{ color: BLUE, fontWeight: "800", fontSize: 11, marginLeft: 5 }}>Edit details</Text></Pressable>
-                <Pressable onPress={() => confirmRemove(item)} style={{ flexDirection: "row", alignItems: "center", paddingVertical: 7, paddingHorizontal: 10, borderRadius: 8, backgroundColor: "#FFF0F0" }}><Ionicons name="trash-outline" size={15} color={RED} /><Text style={{ color: RED, fontWeight: "800", fontSize: 11, marginLeft: 5 }}>Remove</Text></Pressable>
-              </View>
-            </View>
-          ))}
-        </View>
-        <View style={{ marginTop: 6, backgroundColor: "#FFFFFF", borderRadius: 16, overflow: "hidden" }}>
-          {[[ "car-outline", isAmbulance ? "Ambulance Details" : "Auto Details" ],["document-text-outline","Documents"],["help-circle-outline","Help & Support"],["settings-outline","Account Settings"]].map(([icon,title]) => <View key={title} style={{ minHeight: 54, paddingHorizontal: 15, flexDirection: "row", alignItems: "center", borderBottomWidth: 1, borderBottomColor: "#EEF2F6" }}><Ionicons name={icon as any} size={19} color={BLUE} /><Text style={{ flex: 1, marginLeft: 11, color: TEXT, fontSize: 12, fontWeight: "700" }}>{title}</Text><Ionicons name="chevron-forward" size={17} color={MUTED} /></View>)}
-        </View>
-        <Pressable onPress={logout} style={{ marginTop: 14, height: 49, borderRadius: 12, backgroundColor: "#FFF0F0", alignItems: "center", justifyContent: "center", flexDirection: "row" }}><Ionicons name="log-out-outline" size={18} color={RED} /><Text style={{ marginLeft: 8, color: RED, fontWeight: "900" }}>Logout</Text></Pressable>
+            ))
+          )}
+        </Card>
+
+        <Button
+          title="Log out"
+          icon="log-out-outline"
+          variant="dangerSoft"
+          onPress={logout}
+          style={styles.logout}
+        />
       </ScrollView>
-      <Modal visible={techModal} transparent animationType="slide" onRequestClose={() => setTechModal(false)}>
-        <View style={{ flex: 1, backgroundColor: "#0006", justifyContent: "flex-end" }}>
-          <View style={{ backgroundColor: "#FFFFFF", borderTopLeftRadius: 22, borderTopRightRadius: 22, padding: 20, maxHeight: "88%" }}>
-            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}><Text style={{ color: TEXT, fontSize: 19, fontWeight: "900" }}>{editingId ? "Edit Technician" : "Add Technician"}</Text><Pressable onPress={() => setTechModal(false)}><Ionicons name="close" size={23} color={MUTED} /></Pressable></View>
-            {[[ "Full name *", fullName, setFullName ],["Mobile number *", phone, setPhone],["Qualification (optional)", qualification, setQualification],["Certification number (optional)", certificationNumber, setCertificationNumber]].map(([label,value,setter]) => <View key={label as string} style={{ marginTop: 12 }}><Text style={{ color: TEXT, fontSize: 12, fontWeight: "800", marginBottom: 6 }}>{label as string}</Text><TextInput value={value as string} onChangeText={setter as any} editable={!saving} keyboardType={label === "Mobile number *" ? "phone-pad" : "default"} placeholder={label as string} style={{ borderWidth: 1, borderColor: "#DCE4EE", borderRadius: 10, paddingHorizontal: 12, paddingVertical: 11, color: TEXT }} /></View>)}
-            <Pressable onPress={saveTechnician} disabled={saving} style={{ marginTop: 20, height: 48, borderRadius: 12, backgroundColor: BLUE, alignItems: "center", justifyContent: "center" }}>{saving ? <ActivityIndicator color="#fff" /> : <Text style={{ color: "#fff", fontWeight: "900" }}>Save Technician</Text>}</Pressable>
-          </View>
-        </View>
-      </Modal>
+
+      {editingProfile && profile ? (
+        <ProfileFormModal
+          profile={profile}
+          saving={saving}
+          error={profileError}
+          onClose={() => setEditingProfile(false)}
+          onSave={saveProfile}
+        />
+      ) : null}
+
+      {technicianForm ? (
+        <TechnicianFormModal
+          technician={technicianForm.technician}
+          saving={saving}
+          onClose={() => setTechnicianForm(null)}
+          onSave={saveTechnician}
+        />
+      ) : null}
     </SafeAreaView>
   );
 }
+
+const styles = StyleSheet.create({
+  page: { flex: 1, backgroundColor: colors.background },
+  content: { paddingHorizontal: spacing.lg, paddingBottom: spacing.xl, gap: 0 },
+  identity: { flexDirection: "row", alignItems: "center", gap: spacing.md, marginTop: spacing.xs },
+  avatar: {
+    width: 52,
+    height: 52,
+    borderRadius: radius.pill,
+    backgroundColor: colors.navy,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  avatarText: { fontSize: 18, lineHeight: 24, fontWeight: "700", color: colors.white },
+  identityText: { flex: 1 },
+  rows: { paddingVertical: spacing.xs },
+  note: { ...typography.caption, marginTop: spacing.sm },
+  technician: { minHeight: 60, flexDirection: "row", alignItems: "center" },
+  technicianDivider: { borderBottomWidth: 1, borderBottomColor: colors.divider },
+  technicianText: { flex: 1 },
+  logout: { marginTop: spacing.xl },
+});

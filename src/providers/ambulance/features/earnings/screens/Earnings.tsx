@@ -1,113 +1,193 @@
-import { useEffect, useState } from "react";
-import { ScrollView, Text, View } from "react-native";
+import { useFocusEffect } from "@react-navigation/native";
+import { useCallback, useState } from "react";
+import { ActivityIndicator, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { getMyBookings } from "../../../api/bookings";
-import Row from "../components/Row";
+import { getEarningsSummary } from "../../../api/bookings";
+import { tripHistoryErrorMessage } from "../../../api/errors";
+import { dropAddress, formatMoney, formatTripDate } from "../../../domain/trip";
+import { colors, radius, spacing, typography } from "../../../theme";
+import {
+  Button,
+  Card,
+  EmptyState,
+  ErrorBanner,
+  InfoRow,
+  ScreenHeader,
+  SectionTitle,
+} from "../../../ui/components";
 
-export default function Earnings({ route }: any) {
-  const BLUE = "#1473E6";
-  const BG = "#F5F8FC";
-  const MUTED = "#6B7890";
-  const TEXT = "#10233F";
-  const serviceType = route.params?.serviceType || "AMBULANCE";
+type Summary = Awaited<ReturnType<typeof getEarningsSummary>>;
 
-  const [bookings, setBookings] = useState<any[]>([]);
+export default function Earnings() {
+  const [summary, setSummary] = useState<Summary | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState("");
 
-  useEffect(() => {
-    loadBookings();
+  const load = useCallback(async () => {
+    try {
+      setSummary(await getEarningsSummary());
+      setError("");
+    } catch (loadError) {
+      setError(tripHistoryErrorMessage(loadError));
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
   }, []);
 
-  async function loadBookings() {
-    try {
-      const response = await getMyBookings();
-      const items = Array.isArray(response) ? response : response?.bookings || [];
-      setBookings(
-        items.map((item: any) => {
-          const rawStatus = String(item?.status || "NEW").toUpperCase();
+  useFocusEffect(
+    useCallback(() => {
+      void load();
+    }, [load]),
+  );
 
-          return {
-            serviceType,
-            amount: Number(item?.fare || item?.amount || 0),
-            status: rawStatus === "PAYMENT_PENDING" ? "PAYMENT" : rawStatus,
-          };
-        }),
-      );
-    } catch (error) {
-      console.log("AMBULANCE EARNINGS ERROR:", error);
-    }
+  function refresh() {
+    setRefreshing(true);
+    void load();
   }
 
-  const completed = bookings.filter(
-    (booking) =>
-      booking.serviceType === serviceType && booking.status === "COMPLETED",
-  );
-  const total = completed.reduce(
-    (sum, booking) => sum + Number(booking.amount || 0),
-    0,
-  );
+  function retry() {
+    setLoading(true);
+    void load();
+  }
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: BG }} edges={["top"]}>
-      <ScrollView contentContainerStyle={{ padding: 16 }}>
-        <Text style={{ color: TEXT, fontSize: 23, fontWeight: "900" }}>
-          Earnings
-        </Text>
-        <Text style={{ color: MUTED, fontSize: 11, marginTop: 4 }}>
-          Your transport service earnings
-        </Text>
+    <SafeAreaView style={styles.page} edges={["top"]}>
+      <ScreenHeader title="Earnings" subtitle="Fares from your paid trips" />
 
-        <View
-          style={{
-            marginTop: 18,
-            backgroundColor: BLUE,
-            borderRadius: 20,
-            padding: 20,
-          }}
-        >
-          <Text style={{ color: "#DDEBFF", fontSize: 11 }}>
-            Completed Bookings
-          </Text>
-          <Text
-            style={{
-              color: "#FFFFFF",
-              fontSize: 31,
-              fontWeight: "900",
-              marginTop: 4,
-            }}
-          >
-            ₹{total.toLocaleString("en-IN")}
-          </Text>
-          <Text style={{ color: "#DDEBFF", fontSize: 10, marginTop: 5 }}>
-            Calculated from completed bookings returned by the API
-          </Text>
-        </View>
+      <ScrollView
+        contentContainerStyle={styles.content}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
+      >
+        {loading && !summary ? (
+          <ActivityIndicator style={styles.loading} color={colors.blue} />
+        ) : null}
 
-        <View
-          style={{
-            marginTop: 14,
-            backgroundColor: "#FFFFFF",
-            borderRadius: 17,
-            padding: 16,
-          }}
-        >
-          <Row
-            icon="checkmark-circle-outline"
-            label="Completed bookings"
-            value={String(completed.length)}
+        {error && !summary && !loading ? (
+          <EmptyState
+            icon="cloud-offline-outline"
+            title="Unable to load earnings"
+            message={error}
+            action={<Button title="Try again" variant="secondary" compact onPress={retry} />}
           />
-          <Row
-            icon="calendar-outline"
-            label="Total bookings"
-            value={String(bookings.length)}
-          />
-          <Row
-            icon="wallet-outline"
-            label="Completed earnings"
-            value={`₹${total.toLocaleString("en-IN")}`}
-          />
-        </View>
+        ) : null}
+
+        {summary ? (
+          <>
+            {error ? <ErrorBanner message={error} /> : null}
+
+            <View style={styles.hero}>
+              <Text style={styles.heroLabel}>Total earned</Text>
+              <Text style={styles.heroValue}>{formatMoney(summary.totalEarnings)}</Text>
+              <View style={styles.periods}>
+                <Period label="Today" value={summary.periods.today} />
+                <Period label="Last 7 days" value={summary.periods.last7Days} />
+                <Period label="This month" value={summary.periods.thisMonth} />
+              </View>
+            </View>
+
+            <SectionTitle title="Summary" />
+            <Card style={styles.rows}>
+              <InfoRow
+                icon="checkmark-circle-outline"
+                label="Paid trips"
+                value={String(summary.completedTrips)}
+              />
+              <InfoRow
+                icon="time-outline"
+                label={`Awaiting payment (${summary.pendingTrips})`}
+                value={formatMoney(summary.pendingAmount)}
+              />
+              <InfoRow
+                icon="car-outline"
+                label="All trips"
+                value={String(summary.totalTrips)}
+                last
+              />
+            </Card>
+
+            <SectionTitle title="Recent paid trips" />
+            {summary.recentTrips.length === 0 ? (
+              <Card>
+                <EmptyState
+                  icon="wallet-outline"
+                  title="No paid trips yet"
+                  message="Your earnings will appear here after a patient pays."
+                />
+              </Card>
+            ) : (
+              <Card style={styles.rows}>
+                {summary.recentTrips.map((trip, index) => (
+                  <View
+                    key={trip.id}
+                    style={[
+                      styles.trip,
+                      index < summary.recentTrips.length - 1 ? styles.tripDivider : null,
+                    ]}
+                  >
+                    <View style={styles.tripText}>
+                      <Text style={typography.label} numberOfLines={1}>
+                        {dropAddress(trip.drop)}
+                      </Text>
+                      <Text style={typography.caption}>{formatTripDate(trip)}</Text>
+                    </View>
+                    <Text style={styles.tripFare}>{formatMoney(trip.fare)}</Text>
+                  </View>
+                ))}
+              </Card>
+            )}
+          </>
+        ) : null}
       </ScrollView>
     </SafeAreaView>
   );
 }
+
+function Period({ label, value }: { label: string; value: number }) {
+  return (
+    <View style={styles.period}>
+      <Text style={styles.periodValue} numberOfLines={1} adjustsFontSizeToFit>
+        {formatMoney(value)}
+      </Text>
+      <Text style={styles.periodLabel} numberOfLines={1}>
+        {label}
+      </Text>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  page: { flex: 1, backgroundColor: colors.background },
+  content: { paddingHorizontal: spacing.lg, paddingBottom: spacing.xl, flexGrow: 1 },
+  loading: { marginTop: spacing.xxl },
+  hero: {
+    backgroundColor: colors.navy,
+    borderRadius: radius.lg,
+    padding: spacing.lg,
+  },
+  heroLabel: { fontSize: 14, lineHeight: 20, color: "#C4D0E0" },
+  heroValue: { ...typography.display, color: colors.white, marginTop: 2 },
+  periods: {
+    flexDirection: "row",
+    gap: spacing.md,
+    marginTop: spacing.lg,
+    paddingTop: spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: "rgba(255,255,255,0.16)",
+  },
+  period: { flex: 1 },
+  periodValue: { fontSize: 16, lineHeight: 22, fontWeight: "700", color: colors.white },
+  periodLabel: { fontSize: 12, lineHeight: 16, color: "#C4D0E0" },
+  rows: { paddingVertical: spacing.xs },
+  trip: {
+    minHeight: 60,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+  },
+  tripDivider: { borderBottomWidth: 1, borderBottomColor: colors.divider },
+  tripText: { flex: 1 },
+  tripFare: { ...typography.label, color: colors.green },
+});

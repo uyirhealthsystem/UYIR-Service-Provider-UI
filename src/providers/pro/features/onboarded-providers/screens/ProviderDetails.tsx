@@ -1,9 +1,26 @@
 import { Ionicons } from "@expo/vector-icons";
-import { Pressable, ScrollView, Text, View } from "react-native";
+import { useEffect, useState } from "react";
+import { ActivityIndicator, Pressable, ScrollView, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+
+import { getHospitalById } from "../../../api/onboarding";
+import { optionLabel } from "../../../ui/format";
 
 export default function ProviderDetails({ navigation, route }: any) {
   const provider = route.params?.item;
+  // Always re-read the hospital the onboarding created: the PRO service row only
+  // holds its id, and the hospital may have been edited since the list loaded.
+  const [fresh, setFresh] = useState<any>(null);
+  const [loadingHospital, setLoadingHospital] = useState(!!provider?.hospitalId);
+  useEffect(() => {
+    if (!provider?.hospitalId) return;
+    let cancelled = false;
+    getHospitalById(provider.hospitalId)
+      .then((record) => { if (!cancelled) setFresh(record); })
+      .catch((e) => console.log("Hospital details lookup failed:", e?.message))
+      .finally(() => { if (!cancelled) setLoadingHospital(false); });
+    return () => { cancelled = true; };
+  }, [provider?.hospitalId]);
 
   if (!provider) {
     return (
@@ -27,32 +44,41 @@ export default function ProviderDetails({ navigation, route }: any) {
     );
   }
 
-  const hospital = provider?.hospital || {};
+  const hospital = fresh || provider?.hospital || {};
 
-  const address = provider?.address || hospital?.address || {};
+  const address = hospital?.address || provider?.address || {};
 
   const contactDetails =
-    provider?.contactDetails || hospital?.contactDetails || {};
+    hospital?.contactDetails || provider?.contactDetails || {};
 
-  const facilities = provider?.facilities || hospital?.facilities || {};
+  const facilities = hospital?.facilities || provider?.facilities || {};
 
   const bedCapacity = facilities?.bedCapacity || {};
 
   const services = Array.isArray(provider?.tags) ? provider.tags : [];
 
-  const hospitalType =
-    hospital?.hospitalType || provider?.hospitalType || "Hospital";
+  const hospitalType = optionLabel(
+    hospital?.hospitalType || provider?.hospitalType || "Hospital",
+  );
 
   const hospitalName =
-    provider?.name || hospital?.hospitalName || hospital?.name || "Hospital";
+    hospital?.hospitalName || provider?.name || hospital?.name || "Hospital";
 
-  const district =
-    typeof address === "object"
-      ? address?.district ||
-        address?.city ||
-        provider?.districtId ||
-        "Location unavailable"
-      : address || "Location unavailable";
+  // districtId is a UUID, so it is never shown as a place.
+  const district = loadingHospital
+    ? "Loading…"
+    : typeof address === "object"
+      ? address?.district || address?.city || "Address not available"
+      : address || "Address not available";
+
+  const coordinates = Array.isArray(address?.location?.coordinates) ? address.location.coordinates : null;
+  const claimText = hospital?.claimed
+    ? "Claimed by the hospital"
+    : hospital?.claimCodeSentTo
+      ? `Claim code sent to ${hospital.claimCodeSentTo}`
+      : hospital?.hospitalName
+        ? "Not claimed yet"
+        : "";
 
   const phone =
     contactDetails?.phone ||
@@ -254,7 +280,15 @@ export default function ProviderDetails({ navigation, route }: any) {
             padding: 14,
           }}
         >
+          {loadingHospital ? <ActivityIndicator color="#1747D1" style={{ marginBottom: 12 }} /> : null}
+
           <InfoRow title="Location" value={formatAddress(address, district)} />
+
+          {coordinates ? (
+            <InfoRow title="Map coordinates" value={`${Number(coordinates[1]).toFixed(5)}, ${Number(coordinates[0]).toFixed(5)}`} />
+          ) : null}
+
+          {claimText ? <InfoRow title="Hospital account" value={claimText} /> : null}
 
           <InfoRow title="Registration Number" value={registrationNumber} />
 

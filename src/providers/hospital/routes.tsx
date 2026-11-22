@@ -16,6 +16,7 @@ import HospitalInvoices from "./features/billing/screens/HospitalInvoices";
 import HospitalInvoiceDetail from "./features/billing/screens/HospitalInvoiceDetail";
 import HospitalPayoutAccount from "./features/billing/screens/HospitalPayoutAccount";
 import EmergencyAlertModal from "./components/EmergencyAlertModal";
+import ClaimHospital from "./features/claim/screens/ClaimHospital";
 import { Banner, Button, C } from "./components/ui";
 import { HospitalProvider, useHospitalStore } from "./features/provider-state/store";
 import { useAuth } from "../../auth/store";
@@ -45,17 +46,9 @@ function HospitalGate() {
     );
   }
   if (profileStatus === "missing") {
-    // GET /me → 404: this login has no hospital linked. Registration is not done in the app.
-    return (
-      <View style={{ flex: 1, justifyContent: "center", padding: 24, backgroundColor: C.bg }}>
-        <Text style={{ fontSize: 20, fontWeight: "800", color: C.ink, marginBottom: 8 }}>No hospital linked</Text>
-        <Text style={{ fontSize: 14, color: C.muted, lineHeight: 20, marginBottom: 20 }}>
-          This account isn't linked to a hospital yet. Please contact Uyir support to set up your hospital, then tap Retry.
-        </Text>
-        <Button title="Retry" icon="refresh" onPress={refreshHospital} />
-        <Button title="Log out" variant="ghost" onPress={logout} style={{ marginTop: 10 }} />
-      </View>
-    );
+    // GET /me → 404: this login has no hospital yet. A PRO onboards hospitals and the hospital service
+    // emails the hospital its ID + claim code; linking here makes GET /me return it.
+    return <ClaimHospital onClaimed={refreshHospital} onLogout={logout} />;
   }
   return (
     <>

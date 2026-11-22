@@ -1,112 +1,191 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "@react-navigation/native";
-import { useCallback, useMemo, useState } from "react";
-import {
-  ActivityIndicator,
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  Text,
-  View,
-} from "react-native";
+import { useCallback, useMemo, useRef, useState } from "react";
+import { Text, View } from "react-native";
+
 import { getReferrals } from "../../../api/referrals";
+import { colors, spacing, typography } from "../../../theme";
+import {
+  Card,
+  EmptyState,
+  ErrorBanner,
+  FilterChips,
+  IconBadge,
+  LoadingView,
+  Pill,
+  Screen,
+  ScreenHeader,
+} from "../../../ui/components";
+import {
+  formatDate,
+  listFrom,
+  money,
+  REFERRAL_STATUS,
+  referralStatus,
+  referralType,
+  shortId,
+  type ReferralStatus,
+} from "../../../ui/format";
 
-const BLUE = "#1755E8";
-const DARK = "#101828";
-const MUTED = "#667085";
+// GET /referrals -> [{ id, referredUserId, referredType (CITIZEN |
+// HEALTH_PARTNER), status (PENDING | COMPLETED | CANCELLED), rewardAmount,
+// createdAt, completedAt }], newest first.
 
-function statusStyle(status: string) {
-  const value = status.toUpperCase();
-  if (["COMPLETED", "SUCCESS", "PAID", "RECEIVED"].includes(value)) return { bg: "#DDF8EA", text: "#027A48", icon: "checkmark-circle" as const };
-  if (["CANCELLED", "REJECTED", "FAILED"].includes(value)) return { bg: "#FDE7E7", text: "#D92D20", icon: "close-circle" as const };
-  return { bg: "#FFF1D6", text: "#B54708", icon: "time" as const };
-}
+type Filter = "ALL" | ReferralStatus;
 
 export default function Referrals({ navigation }: any) {
   const [items, setItems] = useState<any[]>([]);
-  const [filter, setFilter] = useState("ALL");
+  const [filter, setFilter] = useState<Filter>("ALL");
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
+  const loaded = useRef(false);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (pull = false) => {
     try {
+      if (pull) setRefreshing(true);
       setError("");
-      const result = await getReferrals();
-      setItems(Array.isArray(result) ? result : Array.isArray(result?.data) ? result.data : []);
+      setItems(listFrom(await getReferrals()));
+      loaded.current = true;
     } catch (loadError: any) {
       console.log("HP referrals error:", loadError);
-      setError(loadError?.message || "Unable to load referrals");
+      setError(loadError?.message || "Unable to load referrals.");
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }, []);
 
-  useFocusEffect(useCallback(() => { load(); }, [load]));
+  useFocusEffect(
+    useCallback(() => {
+      load();
+    }, [load]),
+  );
 
-  const filtered = useMemo(() => {
-    if (filter === "ALL") return items;
-    return items.filter((item) => String(item.status || "PENDING").toUpperCase() === filter);
-  }, [items, filter]);
+  const counts = useMemo(() => {
+    const result: Record<ReferralStatus, number> = { COMPLETED: 0, PENDING: 0, CANCELLED: 0 };
+    for (const item of items) result[referralStatus(item.status)] += 1;
+    return result;
+  }, [items]);
 
-  const completed = items.filter((item) => ["COMPLETED", "SUCCESS", "PAID", "RECEIVED"].includes(String(item.status || "").toUpperCase())).length;
-  const pending = items.filter((item) => !["COMPLETED", "SUCCESS", "PAID", "RECEIVED", "CANCELLED", "REJECTED", "FAILED"].includes(String(item.status || "").toUpperCase())).length;
-  const cancelled = items.filter((item) => ["CANCELLED", "REJECTED", "FAILED"].includes(String(item.status || "").toUpperCase())).length;
+  const earned = useMemo(
+    () => items.filter((item) => referralStatus(item.status) === "COMPLETED").reduce((sum, item) => sum + Number(item.rewardAmount || 0), 0),
+    [items],
+  );
 
-  if (loading && !items.length) {
-    return <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "#F5F7FB" }}><ActivityIndicator size="large" color={BLUE} /></View>;
-  }
+  const filtered = useMemo(
+    () => (filter === "ALL" ? items : items.filter((item) => referralStatus(item.status) === filter)),
+    [items, filter],
+  );
+
+  if (loading && !loaded.current) return <LoadingView label="Loading referrals..." />;
 
   return (
-    <ScrollView
-      style={{ flex: 1, backgroundColor: "#F5F7FB" }}
-      contentContainerStyle={{ padding: 20, paddingTop: 18, paddingBottom: 34 }}
-      refreshControl={<RefreshControl refreshing={loading} onRefresh={load} />}
-      showsVerticalScrollIndicator={false}
-    >
-      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-        <View><Text style={{ color: DARK, fontSize: 26, fontWeight: "900" }}>My Referrals</Text><Text style={{ marginTop: 4, color: MUTED, fontSize: 13 }}>Track every referral and its status.</Text></View>
-        <View style={{ width: 42, height: 42, borderRadius: 13, backgroundColor: "#EAF0FF", alignItems: "center", justifyContent: "center" }}><Ionicons name="people-outline" size={21} color={BLUE} /></View>
+    <Screen onRefresh={() => load(true)} refreshing={refreshing}>
+      <ScreenHeader title="My referrals" subtitle="Everyone who joined with your code." />
+
+      {/* Summary strip */}
+      <Card style={{ flexDirection: "row", paddingVertical: spacing.md }}>
+        <Summary label="Completed" value={counts.COMPLETED} color={colors.green} />
+        <Divider />
+        <Summary label="Pending" value={counts.PENDING} color={colors.amber} />
+        <Divider />
+        <Summary label="Earned" value={money(earned, { decimals: 0 })} color={colors.brand} />
+      </Card>
+
+      <View style={{ marginTop: spacing.lg, marginBottom: spacing.md, marginHorizontal: -spacing.xl }}>
+        <View style={{ paddingHorizontal: spacing.xl }}>
+          <FilterChips<Filter>
+            value={filter}
+            onChange={setFilter}
+            options={[
+              { value: "ALL", label: `All · ${items.length}` },
+              { value: "COMPLETED", label: `Completed · ${counts.COMPLETED}` },
+              { value: "PENDING", label: `Pending · ${counts.PENDING}` },
+              { value: "CANCELLED", label: `Cancelled · ${counts.CANCELLED}` },
+            ]}
+          />
+        </View>
       </View>
 
-      <View style={{ marginTop: 18, flexDirection: "row", gap: 8 }}>
-        <View style={{ flex: 1, backgroundColor: "#FFFFFF", borderRadius: 15, padding: 14 }}><Text style={{ color: MUTED, fontSize: 11 }}>Total</Text><Text style={{ marginTop: 5, color: DARK, fontWeight: "900", fontSize: 21 }}>{items.length}</Text></View>
-        <View style={{ flex: 1, backgroundColor: "#FFFFFF", borderRadius: 15, padding: 14 }}><Text style={{ color: MUTED, fontSize: 11 }}>Completed</Text><Text style={{ marginTop: 5, color: "#027A48", fontWeight: "900", fontSize: 21 }}>{completed}</Text></View>
-        <View style={{ flex: 1, backgroundColor: "#FFFFFF", borderRadius: 15, padding: 14 }}><Text style={{ color: MUTED, fontSize: 11 }}>Pending</Text><Text style={{ marginTop: 5, color: "#B54708", fontWeight: "900", fontSize: 21 }}>{pending}</Text></View>
-      </View>
+      {error ? <ErrorBanner message={error} onRetry={() => load(true)} /> : null}
 
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 18 }}>
-        {["ALL", "COMPLETED", "PENDING", "CANCELLED"].map((value) => (
-          <Pressable key={value} onPress={() => setFilter(value)} style={{ marginRight: 8, paddingHorizontal: 15, height: 36, borderRadius: 18, backgroundColor: filter === value ? BLUE : "#FFFFFF", alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: filter === value ? BLUE : "#E6EAF1" }}>
-            <Text style={{ color: filter === value ? "#FFFFFF" : MUTED, fontSize: 11, fontWeight: "800" }}>{value === "ALL" ? `All (${items.length})` : value === "COMPLETED" ? `Completed (${completed})` : value === "PENDING" ? `Pending (${pending})` : `Cancelled (${cancelled})`}</Text>
-          </Pressable>
-        ))}
-      </ScrollView>
-
-      {error ? <View style={{ marginTop: 15, padding: 12, borderRadius: 12, backgroundColor: "#FFF0F0" }}><Text style={{ color: "#D92D20", fontSize: 13 }}>{error}</Text></View> : null}
-
-      {!filtered.length && !error ? <View style={{ marginTop: 30, alignItems: "center" }}><Ionicons name="people-outline" size={42} color="#B8C0CF" /><Text style={{ marginTop: 10, color: MUTED, fontWeight: "600" }}>No referrals in this category.</Text></View> : null}
+      {!filtered.length && !error ? (
+        items.length ? (
+          <EmptyState icon="filter-outline" title="Nothing here" message="No referrals match this filter." actionLabel="Show all" onAction={() => setFilter("ALL")} />
+        ) : (
+          <EmptyState
+            icon="people-outline"
+            title="No referrals yet"
+            message="Share your referral code with citizens and Health Partners. Everyone who joins with it appears here."
+            actionLabel="Share my code"
+            onAction={() => navigation.navigate("ReferHub")}
+          />
+        )
+      ) : null}
 
       {filtered.map((item, index) => {
-        const status = String(item.status || "PENDING").toUpperCase();
-        const badge = statusStyle(status);
-        const name = item.referredUserName || item.fullName || item.name || `Referral ${index + 1}`;
-        const type = item.referredType === "CITIZEN" ? "Citizen App" : item.referredType || "Referral";
-        const date = item.createdAt || item.created_at || item.referralDate || item.date;
+        const statusKey = referralStatus(item.status);
+        const status = REFERRAL_STATUS[statusKey];
+        const type = referralType(item.referredType);
+        const isCitizen = type.label === "Citizen";
+        const note =
+          statusKey === "COMPLETED"
+            ? `+${money(item.rewardAmount)} earned`
+            : statusKey === "PENDING"
+              ? isCitizen
+                ? "Waiting for ABHA link"
+                : "Processing"
+              : "No reward";
+
         return (
-          <Pressable key={item.id || `${name}-${index}`} onPress={() => navigation.getParent()?.getParent()?.navigate("ReferralDetails", { referral: item })} style={{ marginTop: 11, backgroundColor: "#FFFFFF", borderRadius: 17, padding: 15, flexDirection: "row", alignItems: "center", borderWidth: 1, borderColor: "#EEF1F6" }}>
-            <View style={{ width: 42, height: 42, borderRadius: 14, backgroundColor: index % 2 === 0 ? "#EAF0FF" : "#F1EAFE", alignItems: "center", justifyContent: "center" }}><Text style={{ color: BLUE, fontWeight: "900" }}>{String(name).charAt(0).toUpperCase()}</Text></View>
-            <View style={{ flex: 1, marginLeft: 12 }}>
-              <Text style={{ color: DARK, fontWeight: "800", fontSize: 14 }} numberOfLines={1}>{name}</Text>
-              <Text style={{ marginTop: 4, color: MUTED, fontSize: 11 }}>{type}{date ? ` • ${String(date).slice(0, 10)}` : ""}</Text>
-              <Text style={{ marginTop: 5, color: BLUE, fontWeight: "800", fontSize: 12 }}>₹{item.rewardAmount ?? item.amount ?? "0.00"}</Text>
+          <Card
+            key={item.id || index}
+            onPress={() => navigation.navigate("ReferralDetails", { referral: item })}
+            accessibilityLabel={`${type.label} referral ${shortId(item.referredUserId)}, ${status.label}, ${note}`}
+            style={{ marginBottom: spacing.md }}
+          >
+            <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md }}>
+              <IconBadge icon={type.icon} tone={type.tone} size={44} />
+              <View style={{ flex: 1 }}>
+                <Text style={typography.label}>
+                  {type.label} {shortId(item.referredUserId)}
+                </Text>
+                <Text style={[typography.caption, { marginTop: 2 }]}>Joined {formatDate(item.createdAt)}</Text>
+                <Text
+                  style={{
+                    marginTop: 4,
+                    fontSize: 12,
+                    fontWeight: "700",
+                    color: statusKey === "COMPLETED" ? colors.green : statusKey === "PENDING" ? colors.amber : colors.muted,
+                  }}
+                >
+                  {note}
+                </Text>
+              </View>
+              <View style={{ alignItems: "flex-end", gap: spacing.sm }}>
+                <Pill label={status.label} tone={status.tone} icon={status.icon} />
+                <Ionicons name="chevron-forward" size={16} color={colors.muted} />
+              </View>
             </View>
-            <View style={{ alignItems: "flex-end" }}>
-              <View style={{ paddingHorizontal: 9, paddingVertical: 5, borderRadius: 10, backgroundColor: badge.bg, flexDirection: "row", alignItems: "center" }}><Ionicons name={badge.icon} size={12} color={badge.text} /><Text style={{ marginLeft: 4, color: badge.text, fontSize: 10, fontWeight: "800" }}>{status}</Text></View>
-              <Ionicons name="chevron-forward" size={17} color="#98A2B3" style={{ marginTop: 9 }} />
-            </View>
-          </Pressable>
+          </Card>
         );
       })}
-    </ScrollView>
+    </Screen>
   );
+}
+
+function Summary({ label, value, color }: { label: string; value: string | number; color: string }) {
+  return (
+    <View style={{ flex: 1, alignItems: "center" }}>
+      <Text style={{ fontSize: 20, fontWeight: "800", color }} numberOfLines={1} adjustsFontSizeToFit>
+        {value}
+      </Text>
+      <Text style={[typography.caption, { marginTop: 2 }]}>{label}</Text>
+    </View>
+  );
+}
+
+function Divider() {
+  return <View style={{ width: 1, alignSelf: "stretch", backgroundColor: colors.divider }} />;
 }

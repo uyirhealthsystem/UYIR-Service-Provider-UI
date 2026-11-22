@@ -161,7 +161,12 @@ export async function completeProviderLogin(
     } catch (checkError: any) {
       console.log("HP registration check error:", checkError);
 
-      if (checkError?.status === 404) {
+      // The HP service answers a missing profile with 400
+      // { message: "Health Partner not found" }, not 404.
+      if (
+        checkError?.status === 404 ||
+        (checkError?.status === 400 && isHealthPartnerProfileMissing(checkError?.data))
+      ) {
         navigation.replace("HealthPartnerRegistration", {
           sub: userId,
           role,
@@ -288,6 +293,9 @@ export async function completeProviderLogin(
   }
 
   if (role === "PRO") {
+    // Keep the signed-in session available to ProRegistration (and authFetch)
+    // even if the screen is reached without route params.
+    setAuthSession({ accessToken, refreshToken, userId, role });
     setProUserId(userId);
 
     try {

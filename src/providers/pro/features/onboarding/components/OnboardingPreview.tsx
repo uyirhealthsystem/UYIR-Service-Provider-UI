@@ -15,10 +15,16 @@ import {
 import {
   buildDoctorPayload,
   buildHospitalPayload,
+  extractHospitalId,
   submitDoctor,
   submitHospital,
   updateProHospitalStatus,
 } from "../../../api/onboarding";
+import { Ionicons } from "@expo/vector-icons";
+import { colors, radius, shadow, spacing, typography } from "../../../theme";
+import { Button, Card, HeaderIconButton, IconBadge } from "../../../ui/components";
+import { optionLabel } from "../../../ui/format";
+import { scheduleToText } from "./ScheduleEditor";
 
 export default function OnboardingPreview({ navigation, route }: any) {
   const form = route.params?.form || {};
@@ -35,15 +41,20 @@ export default function OnboardingPreview({ navigation, route }: any) {
     yearsOfExperience: form.doctorExperience,
     consultationFee: form.doctorFee,
     availability: form.doctorAvailability,
-    customTimings: form.doctorCustomTimings,
+    customTimings: form.doctorAvailability === "CUSTOM_TIMINGS" ? scheduleToText(form.doctorSchedule ?? form.doctorCustomTimings) : undefined,
     engagementType: form.doctorEngagement,
     doctorCategory: form.doctorCategory,
     phone: form.doctorPhone,
     email: form.doctorEmail,
     department: form.doctorDepartment,
+    teleconsultation: form.doctorTeleconsultation,
+    eSignature: typeof form.doctorESignature === "string" && form.doctorESignature.startsWith("data:image")
+      ? "Signed"
+      : form.doctorTeleconsultation === true ? "Not collected - needed for teleconsultation" : undefined,
   };
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [stage, setStage] = useState("");
 
   const blue = "#1747D1";
   const insets = useSafeAreaInsets();
@@ -53,11 +64,7 @@ export default function OnboardingPreview({ navigation, route }: any) {
       title: "Basic Information",
       fields: [
         ["Hospital Name", payload.hospitalName],
-        [
-          "Hospital Insured Against Damage",
-          payload.operations?.hospitalInsured,
-        ],
-        ["Registration Number", payload.registrationNumber],
+        ["Hospital Registration Number", payload.registrationNumber],
         ["Ownership Type", payload.ownershipType],
         ["Hospital Type", payload.hospitalType],
       ],
@@ -128,6 +135,7 @@ export default function OnboardingPreview({ navigation, route }: any) {
           "Management Software",
           payload.operations?.hospitalManagementSoftwareInUse,
         ],
+        ["Hospital Insured Against Damage", payload.operations?.hospitalInsured],
         [
           "Insurance Companies Accepted for Patients",
           payload.operations?.empanelledInsuranceCompanies,
@@ -154,19 +162,21 @@ export default function OnboardingPreview({ navigation, route }: any) {
             name: "Doctor Name",
             dateOfBirth: "Date of Birth",
             sex: "Sex",
-            tnmcNumber: "TNMC Registration Number",
+            tnmcNumber: "Doctor Registration Number",
             qualifications: "Qualifications",
             specialties: "Specialties",
             emergencyConditionsHandled: "Emergency Conditions Handled",
             yearsOfExperience: "Years of Experience",
             consultationFee: "Consultation Fee",
             availability: "Availability",
-            customTimings: "Custom Timings",
+            customTimings: "Working Hours",
             engagementType: "Engagement Type",
             doctorCategory: "Doctor Category",
             phone: "Mobile Number",
             email: "Email",
             department: "Department",
+            teleconsultation: "Provides Teleconsultation",
+            eSignature: "E-signature",
           } as Record<string, string>
         )[key] ||
           key.replace(/([A-Z])/g, " $1").replace(/^./, (c) => c.toUpperCase()),
@@ -221,7 +231,7 @@ export default function OnboardingPreview({ navigation, route }: any) {
         .join("\n");
     }
 
-    return String(value);
+    return optionLabel(value);
   };
   const submitOnboarding = async () => {
     if (submitting) return;
@@ -260,20 +270,13 @@ export default function OnboardingPreview({ navigation, route }: any) {
       }
 
       // 1. Create the hospital only if a successful hospital ID is not saved.
+      setStage("Creating the hospital…");
       if (!pending?.hospitalId) {
         const hospitalResponse = await submitHospital(payload);
-        const response = hospitalResponse as any;
-        const hospitalId = String(
-          response?.id ??
-            response?.hospitalId ??
-            response?.hospital?.id ??
-            response?.data?.id ??
-            response?.data?.hospitalId ??
-            response?.data?.hospital?.id ??
-            "",
-        ).trim();
+        const hospitalId = extractHospitalId(hospitalResponse);
 
         if (!hospitalId) {
+          console.warn("Hospital created but no ID found in response:", hospitalResponse);
           throw new Error(
             "Hospital submission did not return a hospital ID. Doctor registration was not submitted. Please verify the hospital record before retrying.",
           );
@@ -297,6 +300,7 @@ export default function OnboardingPreview({ navigation, route }: any) {
       }
 
       // 2. Register the doctor only after hospital creation succeeds.
+      setStage("Registering the doctor…");
       // If doctor registration already succeeded in a previous attempt, skip it.
       if (!pending.doctorSubmitted) {
         const doctorPayload = buildDoctorPayload(form, pending.hospitalId);
@@ -312,15 +316,19 @@ export default function OnboardingPreview({ navigation, route }: any) {
         await AsyncStorage.setItem(pendingKey, JSON.stringify(pending));
       }
 
-      // 3. Update the PRO lead only after hospital and doctor succeed.
+      // 3. Mark the PRO lead onboarded and link it to the created hospital.
+      setStage("Linking the hospital to you…");
       if (proHospitalId) {
         await updateProHospitalStatus(proHospitalId, {
           status: "ONBOARDED",
+          hospitalId: pending.hospitalId,
         });
       }
 
       const completedPending = pending;
       await AsyncStorage.removeItem(pendingKey);
+      // The form draft for this hospital is finished - drop it.
+      await AsyncStorage.removeItem(`pro:onboarding:draft:${proHospitalId || "new"}`).catch(() => {});
 
       navigation.replace("OnboardingApproval", {
         proHospitalId,
@@ -339,214 +347,124 @@ export default function OnboardingPreview({ navigation, route }: any) {
     }
   };
 
+  // Which form step each review section edits (hospitalFields order).
+  const SECTION_UI: Record<string, { step: number; icon: any }> = {
+    "Basic Information": { step: 0, icon: "id-card-outline" },
+    Address: { step: 1, icon: "location-outline" },
+    "Contact Details": { step: 2, icon: "call-outline" },
+    Facilities: { step: 3, icon: "medkit-outline" },
+    "Emergency Services": { step: 4, icon: "pulse-outline" },
+    "Staff Details": { step: 5, icon: "people-outline" },
+    Operations: { step: 6, icon: "settings-outline" },
+    "Surgical Network": { step: 7, icon: "cut-outline" },
+    "Doctor Details": { step: 8, icon: "person-add-outline" },
+  };
+
+  const editSection = (step: number) =>
+    navigation.navigate({ name: "HospitalOnboarding", params: { jumpTo: step, jumpAt: Date.now() }, merge: true });
+
+  const totalBeds =
+    (payload.facilities?.bedCapacity?.general || 0) +
+    (payload.facilities?.bedCapacity?.icu || 0) +
+    (payload.facilities?.bedCapacity?.nicu || 0);
+
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: "#F5F7FB" }}>
-      <View
-        style={{
-          backgroundColor: "#FFFFFF",
-          borderBottomWidth: 1,
-          borderBottomColor: "#E4E8F0",
-          paddingHorizontal: 16,
-          paddingTop: 7,
-          paddingBottom: 12,
-        }}
-      >
-        <View style={{ flexDirection: "row", alignItems: "center" }}>
-          <Pressable
-            onPress={() => navigation.goBack()}
-            style={{
-              width: 36,
-              height: 36,
-              borderRadius: 9,
-              backgroundColor: "#F5F7FB",
-              borderWidth: 1,
-              borderColor: "#E3E7EF",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            <Text style={{ fontSize: 23, color: "#171A2B", marginTop: -2 }}>
-              ‹
-            </Text>
-          </Pressable>
-
-          <View style={{ flex: 1, marginLeft: 11 }}>
-            <Text style={{ fontSize: 20, fontWeight: "700", color: "#171A2B" }}>
-              Review Details
-            </Text>
-            <Text style={{ fontSize: 11, color: "#73798C", marginTop: 2 }}>
-              Check everything before submitting
-            </Text>
-          </View>
-
-          <View
-            style={{
-              backgroundColor: "#EAF1FF",
-              borderRadius: 8,
-              paddingHorizontal: 9,
-              paddingVertical: 6,
-            }}
-          >
-            <Text style={{ fontSize: 10, fontWeight: "700", color: blue }}>
-              REVIEW
-            </Text>
-          </View>
+    <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }} edges={["top"]}>
+      <View style={{ flexDirection: "row", alignItems: "center", paddingHorizontal: spacing.lg, paddingVertical: spacing.sm, backgroundColor: colors.surface, borderBottomWidth: 1, borderBottomColor: colors.divider }}>
+        <HeaderIconButton icon="arrow-back" label="Back to form" onPress={() => navigation.goBack()} />
+        <View style={{ flex: 1, marginLeft: spacing.md }}>
+          <Text style={typography.heading}>Review and submit</Text>
+          <Text style={typography.caption}>Check everything before it goes to Uyir</Text>
         </View>
       </View>
 
-      <ScrollView
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={{
-          padding: 16,
-          paddingBottom: 130 + insets.bottom,
-        }}
-      >
-        <View
-          style={{
-            backgroundColor: "#EAF1FF",
-            borderRadius: 11,
-            padding: 13,
-            flexDirection: "row",
-            alignItems: "center",
-            marginBottom: 12,
-          }}
-        >
-          <View
-            style={{
-              width: 34,
-              height: 34,
-              borderRadius: 17,
-              backgroundColor: "#FFFFFF",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            <Text style={{ color: blue, fontSize: 17, fontWeight: "700" }}>
-              ✓
-            </Text>
+      <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: 140 + insets.bottom }} showsVerticalScrollIndicator={false}>
+        <Card style={{ backgroundColor: colors.brand, borderColor: colors.brand }}>
+          <Text style={[typography.overline, { color: colors.brandOnDark }]}>ONBOARDING</Text>
+          <Text style={{ color: colors.white, fontSize: 20, fontWeight: "800", marginTop: 4 }} numberOfLines={2}>
+            {payload.hospitalName || "Hospital"}
+          </Text>
+          <Text style={{ color: colors.brandOnDark, fontSize: 13, marginTop: 4 }}>
+            {[optionLabel(payload.hospitalType), payload.address?.city, payload.address?.district].filter(Boolean).join(" · ")}
+          </Text>
+          <View style={{ flexDirection: "row", gap: spacing.xl, marginTop: spacing.lg }}>
+            <HeroFact label="Beds" value={String(totalBeds)} />
+            <HeroFact label="Departments" value={String(payload.facilities?.specialtyDepartments?.length || 0)} />
+            <HeroFact label="Emergency" value={payload.emergencyServices?.handlesEmergencies ? "Yes" : "No"} />
           </View>
-          <View style={{ flex: 1, marginLeft: 10 }}>
-            <Text style={{ fontSize: 12, fontWeight: "700", color: blue }}>
-              Ready for submission
-            </Text>
-            <Text
-              style={{
-                fontSize: 10,
-                color: "#596074",
-                marginTop: 3,
-                lineHeight: 16,
-              }}
-            >
-              Please verify the information collected from the hospital.
-            </Text>
-          </View>
-        </View>
+        </Card>
 
-        {sections.map((section) => (
-          <View
-            key={section.title}
-            style={{
-              backgroundColor: "#FFFFFF",
-              borderRadius: 13,
-              borderWidth: 1,
-              borderColor: "#E3E7EF",
-              marginBottom: 10,
-              overflow: "hidden",
-            }}
-          >
-            <View
-              style={{
-                backgroundColor: "#FAFBFD",
-                paddingHorizontal: 14,
-                paddingVertical: 11,
-                borderBottomWidth: 1,
-                borderBottomColor: "#E9ECF2",
-              }}
-            >
-              <Text
-                style={{ fontSize: 14, fontWeight: "700", color: "#171A2B" }}
-              >
-                {section.title}
-              </Text>
-            </View>
+        <Text style={[typography.caption, { marginTop: spacing.lg, marginBottom: spacing.sm }]}>
+          Tap <Text style={{ color: colors.brand, fontWeight: "700" }}>Edit</Text> on any section to change it. Your answers are kept.
+        </Text>
 
-            {section.fields.map(([label, value]: any, index: number) => (
-              <View
-                key={`${label}-${index}`}
-                style={{
-                  paddingHorizontal: 14,
-                  paddingVertical: 10,
-                  borderBottomWidth:
-                    index === section.fields.length - 1 ? 0 : 1,
-                  borderBottomColor: "#F0F2F6",
-                }}
-              >
-                <Text style={{ fontSize: 10, color: "#8A91A2" }}>{label}</Text>
-                <Text
-                  style={{
-                    fontSize: 12,
-                    color: "#34394A",
-                    fontWeight: "600",
-                    marginTop: 3,
-                  }}
-                >
-                  {formatValue(value)}
-                </Text>
+        {sections.map((sectionItem) => {
+          const ui = SECTION_UI[sectionItem.title];
+          return (
+            <Card key={sectionItem.title} style={{ marginBottom: spacing.md, padding: 0 }}>
+              <View style={{ flexDirection: "row", alignItems: "center", padding: spacing.lg, paddingBottom: spacing.md }}>
+                <IconBadge icon={ui?.icon || "document-text-outline"} size={36} />
+                <Text style={[typography.heading, { flex: 1, marginLeft: spacing.md }]}>{sectionItem.title}</Text>
+                {ui ? (
+                  <Pressable
+                    onPress={() => editSection(ui.step)}
+                    hitSlop={8}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Edit ${sectionItem.title}`}
+                    style={{ flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: spacing.md, paddingVertical: 6, borderRadius: radius.pill, backgroundColor: colors.brandSoft }}
+                  >
+                    <Ionicons name="create-outline" size={14} color={colors.brand} />
+                    <Text style={{ color: colors.brand, fontWeight: "700", fontSize: 12 }}>Edit</Text>
+                  </Pressable>
+                ) : null}
               </View>
-            ))}
-          </View>
-        ))}
+              {sectionItem.fields.map(([label, value]: any, index: number) => {
+                const text = formatValue(value);
+                const empty = text === "Not provided";
+                const valueColor = empty ? colors.muted : text === "Yes" ? colors.green : text === "No" ? colors.textSecondary : colors.text;
+                return (
+                  <View key={`${label}-${index}`} style={{ flexDirection: "row", paddingHorizontal: spacing.lg, paddingVertical: spacing.md, borderTopWidth: 1, borderTopColor: colors.divider, gap: spacing.md }}>
+                    <Text style={[typography.caption, { width: "42%", color: colors.textSecondary, fontWeight: "600" }]}>{label}</Text>
+                    <Text style={{ flex: 1, fontSize: 13, lineHeight: 19, fontWeight: empty ? "400" : "600", color: valueColor }}>{text}</Text>
+                  </View>
+                );
+              })}
+            </Card>
+          );
+        })}
 
-        {error ? (
-          <View
-            style={{
-              backgroundColor: "#FFF0F1",
-              borderRadius: 9,
-              padding: 11,
-              marginBottom: 10,
-            }}
-          >
-            <Text style={{ fontSize: 11, color: "#C62828", fontWeight: "600" }}>
-              {error}
-            </Text>
-          </View>
-        ) : null}
+        <View style={{ flexDirection: "row", gap: spacing.sm, padding: spacing.md, backgroundColor: colors.brandSoft, borderRadius: radius.md }}>
+          <Ionicons name="information-circle" size={18} color={colors.brand} />
+          <Text style={[typography.caption, { flex: 1, color: colors.textSecondary, lineHeight: 17 }]}>
+            Submitting creates the hospital, registers the doctor and marks this hospital as onboarded by you. If a step fails, your progress is kept and you can retry.
+          </Text>
+        </View>
       </ScrollView>
 
-      <View
-        style={{
-          position: "absolute",
-          left: 0,
-          right: 0,
-          bottom: 0,
-          backgroundColor: "#FFFFFF",
-          borderTopWidth: 1,
-          borderTopColor: "#E6E9F0",
-          paddingHorizontal: 12,
-          paddingTop: 12,
-          paddingBottom: 12 + insets.bottom,
-        }}
-      >
-        <Pressable
-          disabled={submitting}
+      <View style={{ position: "absolute", left: 0, right: 0, bottom: 0, backgroundColor: colors.surface, paddingHorizontal: spacing.lg, paddingTop: spacing.md, paddingBottom: spacing.md + insets.bottom, borderTopWidth: 1, borderTopColor: colors.divider, ...shadow.floating }}>
+        {error ? (
+          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, backgroundColor: colors.redSoft, borderRadius: radius.md, padding: spacing.md, marginBottom: spacing.md }}>
+            <Ionicons name="alert-circle" size={18} color={colors.red} />
+            <Text style={{ flex: 1, color: colors.red, fontSize: 13, fontWeight: "600", lineHeight: 18 }}>{error}</Text>
+          </View>
+        ) : null}
+        <Button
+          label={submitting ? stage || "Submitting…" : error ? "Retry submission" : "Submit onboarding"}
+          icon={error ? "refresh" : "cloud-upload-outline"}
           onPress={submitOnboarding}
-          style={{
-            height: 50,
-            borderRadius: 9,
-            backgroundColor: submitting ? "#8DA5E8" : blue,
-            alignItems: "center",
-            justifyContent: "center",
-          }}
-        >
-          {submitting ? (
-            <ActivityIndicator color="#FFFFFF" />
-          ) : (
-            <Text style={{ fontSize: 14, fontWeight: "700", color: "#FFFFFF" }}>
-              Submit Onboarding
-            </Text>
-          )}
-        </Pressable>
+          loading={submitting}
+        />
+        {submitting && stage ? <Text style={[typography.caption, { textAlign: "center", marginTop: 6 }]}>{stage}</Text> : null}
       </View>
     </SafeAreaView>
+  );
+}
+
+function HeroFact({ label, value }: { label: string; value: string }) {
+  return (
+    <View>
+      <Text style={{ color: colors.white, fontSize: 18, fontWeight: "800" }}>{value}</Text>
+      <Text style={{ color: colors.brandOnDark, fontSize: 11, fontWeight: "600" }}>{label}</Text>
+    </View>
   );
 }

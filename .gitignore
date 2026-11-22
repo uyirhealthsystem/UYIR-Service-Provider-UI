@@ -41,3 +41,12 @@ example
 # generated native folders
 /ios
 /android
+
+# Firebase / Google config
+google-services.json
+GoogleService-Info.plist
+
+# all env files except an example
+.env
+.env.*
+!.env.example

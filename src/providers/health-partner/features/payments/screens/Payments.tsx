@@ -1,85 +1,360 @@
-import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "@react-navigation/native";
-import { useCallback, useMemo, useState } from "react";
-import { ActivityIndicator, Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
-import { getPaymentHistory, getWallet, getWithdrawals } from "../../../api/payments";
+import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
+import { Alert, Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable, Text, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-const BLUE = "#1755E8";
-const DARK = "#101828";
-const MUTED = "#667085";
+import { getPaymentHistory, getWallet, getWithdrawals, withdraw } from "../../../api/payments";
+import { colors, radius, shadow, spacing, typography } from "../../../theme";
+import {
+  Banner,
+  Button,
+  Card,
+  EmptyState,
+  ErrorBanner,
+  Field,
+  IconBadge,
+  ListRow,
+  LoadingView,
+  Pill,
+  Screen,
+  ScreenHeader,
+  Segmented,
+} from "../../../ui/components";
+import { formatDateTime, listFrom, money, toNumber, withdrawalStatus } from "../../../ui/format";
+
+// GET /payments            -> { walletBalance }
+// GET /payments/history    -> reward credits [{ id, type, amount, description, createdAt }]
+// GET /payments/withdrawals -> [{ id, amount, status, createdAt, processedAt }]
+// POST /payments/withdraw  { amount } -> needs a saved bank account and enough balance.
+
+type Tab = "rewards" | "withdrawals";
 
 export default function Payments({ navigation }: any) {
-  const [wallet, setWallet] = useState<any>(null);
+  const [balance, setBalance] = useState(0);
   const [history, setHistory] = useState<any[]>([]);
   const [withdrawals, setWithdrawals] = useState<any[]>([]);
+  const [tab, setTab] = useState<Tab>("rewards");
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const loaded = useRef(false);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (pull = false) => {
     try {
+      if (pull) setRefreshing(true);
       setError("");
       const [walletData, historyData, withdrawalData] = await Promise.all([getWallet(), getPaymentHistory(), getWithdrawals()]);
-      setWallet(walletData);
-      setHistory(Array.isArray(historyData) ? historyData : Array.isArray(historyData?.data) ? historyData.data : []);
-      setWithdrawals(Array.isArray(withdrawalData) ? withdrawalData : Array.isArray(withdrawalData?.data) ? withdrawalData.data : []);
+      setBalance(toNumber(walletData?.walletBalance));
+      setHistory(listFrom(historyData));
+      setWithdrawals(listFrom(withdrawalData));
+      loaded.current = true;
     } catch (loadError: any) {
       console.log("HP payment error:", loadError);
-      setError(loadError?.message || "Unable to load payments");
+      setError(loadError?.message || "Unable to load your wallet.");
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }, []);
 
-  useFocusEffect(useCallback(() => { load(); }, [load]));
+  useFocusEffect(
+    useCallback(() => {
+      load();
+    }, [load]),
+  );
 
-  const totalEarned = useMemo(() => history.reduce((sum, item) => sum + Number(item.amount || item.rewardAmount || 0), 0), [history]);
-  const received = useMemo(() => history.reduce((sum, item) => {
-    const status = String(item.status || "RECEIVED").toUpperCase();
-    return ["PENDING", "PROCESSING"].includes(status) ? sum : sum + Number(item.amount || item.rewardAmount || 0);
-  }, 0), [history]);
-  const pending = useMemo(() => history.reduce((sum, item) => {
-    const status = String(item.status || "RECEIVED").toUpperCase();
-    return ["PENDING", "PROCESSING"].includes(status) ? sum + Number(item.amount || item.rewardAmount || 0) : sum;
-  }, 0), [history]);
+  const totalEarned = useMemo(() => history.reduce((sum, item) => sum + toNumber(item.amount), 0), [history]);
+  const withdrawn = useMemo(
+    () => withdrawals.filter((item) => withdrawalStatus(item.status).tone !== "red").reduce((sum, item) => sum + toNumber(item.amount), 0),
+    [withdrawals],
+  );
 
-  if (loading && !wallet) return <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "#F5F7FB" }}><ActivityIndicator size="large" color={BLUE} /></View>;
+  if (loading && !loaded.current) return <LoadingView label="Loading your wallet..." />;
 
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: "#F5F7FB" }} contentContainerStyle={{ padding: 20, paddingTop: 18, paddingBottom: 35 }} refreshControl={<RefreshControl refreshing={loading} onRefresh={load} />} showsVerticalScrollIndicator={false}>
-      <Text style={{ color: DARK, fontSize: 27, fontWeight: "900" }}>Payments</Text>
-      <Text style={{ marginTop: 5, color: MUTED, fontSize: 13 }}>Track rewards, received and pending amounts.</Text>
+    <Screen onRefresh={() => load(true)} refreshing={refreshing}>
+      <ScreenHeader title="Wallet" subtitle="Your referral rewards and withdrawals." />
+      {error ? <ErrorBanner message={error} onRetry={() => load(true)} /> : null}
 
-      {error ? <View style={{ marginTop: 14, backgroundColor: "#FFF0F0", padding: 12, borderRadius: 12 }}><Text style={{ color: "#D92D20", fontSize: 13 }}>{error}</Text></View> : null}
-
-      <View style={{ marginTop: 19, backgroundColor: BLUE, borderRadius: 22, padding: 20 }}>
-        <View style={{ flexDirection: "row", justifyContent: "space-between" }}><View><Text style={{ color: "#DCE6FF", fontSize: 12 }}>Available Balance</Text><Text style={{ marginTop: 7, color: "#FFFFFF", fontSize: 30, fontWeight: "900" }}>₹{wallet?.walletBalance ?? "0.00"}</Text></View><View style={{ width: 45, height: 45, borderRadius: 14, backgroundColor: "rgba(255,255,255,0.16)", alignItems: "center", justifyContent: "center" }}><Ionicons name="wallet" size={22} color="#FFFFFF" /></View></View>
-        <Pressable onPress={() => navigation.getParent()?.getParent()?.navigate("BankDetails")} style={{ marginTop: 17, backgroundColor: "rgba(255,255,255,0.15)", borderRadius: 12, padding: 12, flexDirection: "row", alignItems: "center" }}><Ionicons name="card-outline" size={17} color="#FFFFFF" /><Text style={{ marginLeft: 8, color: "#FFFFFF", fontSize: 12, fontWeight: "700", flex: 1 }}>Manage bank account</Text><Ionicons name="chevron-forward" size={16} color="#FFFFFF" /></Pressable>
+      {/* Balance hero */}
+      <View style={{ backgroundColor: colors.brand, borderRadius: radius.xl, padding: spacing.xl, overflow: "hidden", ...shadow.card }}>
+        <View style={{ position: "absolute", width: 200, height: 200, borderRadius: 100, right: -70, top: -90, backgroundColor: "rgba(255,255,255,0.08)" }} />
+        <Text style={[typography.overline, { color: colors.brandOnDark }]}>AVAILABLE BALANCE</Text>
+        <Text style={{ marginTop: spacing.sm, color: colors.white, fontSize: 34, fontWeight: "800" }} numberOfLines={1} adjustsFontSizeToFit>
+          {money(balance)}
+        </Text>
+        <View style={{ flexDirection: "row", marginTop: spacing.lg, gap: spacing.lg }}>
+          <HeroStat label="Total earned" value={money(totalEarned)} />
+          <HeroStat label="Withdrawn" value={money(withdrawn)} />
+        </View>
+        <Button
+          label="Withdraw to bank"
+          icon="arrow-up-circle-outline"
+          variant="light"
+          disabled={balance <= 0}
+          onPress={() => setSheetOpen(true)}
+          style={{ marginTop: spacing.lg }}
+        />
+        {balance <= 0 ? (
+          <Text style={{ marginTop: spacing.sm, color: colors.brandOnDark, fontSize: 12, textAlign: "center" }}>
+            Earn rewards from referrals to withdraw.
+          </Text>
+        ) : null}
       </View>
 
-      <View style={{ flexDirection: "row", gap: 10, marginTop: 12 }}>
-        <View style={{ flex: 1, backgroundColor: "#EAFBF4", borderRadius: 16, padding: 15 }}><View style={{ flexDirection: "row", alignItems: "center" }}><Ionicons name="arrow-down-circle" size={18} color="#039855" /><Text style={{ marginLeft: 7, color: "#027A48", fontSize: 11, fontWeight: "700" }}>Received</Text></View><Text style={{ marginTop: 8, color: DARK, fontSize: 20, fontWeight: "900" }}>₹{received.toFixed(2)}</Text></View>
-        <View style={{ flex: 1, backgroundColor: "#FFF5E6", borderRadius: 16, padding: 15 }}><View style={{ flexDirection: "row", alignItems: "center" }}><Ionicons name="time-outline" size={18} color="#F79009" /><Text style={{ marginLeft: 7, color: "#B54708", fontSize: 11, fontWeight: "700" }}>Pending</Text></View><Text style={{ marginTop: 8, color: DARK, fontSize: 20, fontWeight: "900" }}>₹{pending.toFixed(2)}</Text></View>
+      {/* Account actions */}
+      <Card padded={false} style={{ marginTop: spacing.md }}>
+        <ListRow icon="card-outline" title="Bank account" subtitle="Where your withdrawals are sent" onPress={() => navigation.navigate("BankDetails")} />
+        <ListRow
+          icon="help-buoy-outline"
+          tone="amber"
+          title="Payment help"
+          subtitle="A reward or withdrawal looks wrong?"
+          onPress={() => navigation.navigate("PaymentIssue")}
+          last
+        />
+      </Card>
+
+      {/* History */}
+      <View style={{ marginTop: spacing.xl, marginBottom: spacing.md }}>
+        <Segmented<Tab>
+          value={tab}
+          onChange={setTab}
+          options={[
+            { value: "rewards", label: `Rewards (${history.length})` },
+            { value: "withdrawals", label: `Withdrawals (${withdrawals.length})` },
+          ]}
+        />
       </View>
 
-      <View style={{ marginTop: 12, backgroundColor: "#FFFFFF", borderRadius: 18, padding: 17 }}>
-        <View style={{ flexDirection: "row", alignItems: "center" }}><View style={{ width: 38, height: 38, borderRadius: 12, backgroundColor: "#EAF0FF", alignItems: "center", justifyContent: "center" }}><Ionicons name="analytics-outline" size={20} color={BLUE} /></View><View style={{ marginLeft: 11 }}><Text style={{ color: MUTED, fontSize: 11 }}>Total reward transactions</Text><Text style={{ marginTop: 2, color: DARK, fontWeight: "900", fontSize: 18 }}>₹{totalEarned.toFixed(2)}</Text></View></View>
+      {tab === "rewards" ? (
+        history.length ? (
+          <Card padded={false}>
+            {history.map((item, index) => (
+              <TxRow
+                key={item.id || index}
+                icon="gift-outline"
+                tone="green"
+                title={item.description || "Referral reward"}
+                time={formatDateTime(item.createdAt)}
+                amount={`+${money(item.amount)}`}
+                amountColor={colors.green}
+                last={index === history.length - 1}
+              />
+            ))}
+          </Card>
+        ) : (
+          <EmptyState icon="gift-outline" title="No rewards yet" message="Rewards appear here when your referrals complete." />
+        )
+      ) : withdrawals.length ? (
+        <Card padded={false}>
+          {withdrawals.map((item, index) => {
+            const status = withdrawalStatus(item.status);
+            return (
+              <TxRow
+                key={item.id || index}
+                icon="arrow-up-circle-outline"
+                tone="blue"
+                title="Withdrawal to bank"
+                time={formatDateTime(item.createdAt)}
+                amount={`-${money(item.amount)}`}
+                amountColor={colors.text}
+                pill={<Pill label={status.label} tone={status.tone} />}
+                last={index === withdrawals.length - 1}
+              />
+            );
+          })}
+        </Card>
+      ) : (
+        <EmptyState icon="arrow-up-circle-outline" title="No withdrawals yet" message="Withdrawals you request will show here with their status." />
+      )}
+
+      <WithdrawSheet
+        visible={sheetOpen}
+        balance={balance}
+        onClose={() => setSheetOpen(false)}
+        onAddBank={() => {
+          setSheetOpen(false);
+          navigation.navigate("BankDetails");
+        }}
+        onDone={() => {
+          setSheetOpen(false);
+          setTab("withdrawals");
+          load();
+        }}
+      />
+    </Screen>
+  );
+}
+
+function HeroStat({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={{ flex: 1, backgroundColor: "rgba(255,255,255,0.12)", borderRadius: radius.md, padding: spacing.md }}>
+      <Text style={{ color: colors.brandOnDark, fontSize: 12 }}>{label}</Text>
+      <Text style={{ marginTop: 2, color: colors.white, fontSize: 16, fontWeight: "800" }} numberOfLines={1} adjustsFontSizeToFit>
+        {value}
+      </Text>
+    </View>
+  );
+}
+
+function TxRow({
+  icon,
+  tone,
+  title,
+  time,
+  amount,
+  amountColor,
+  pill,
+  last,
+}: {
+  icon: "gift-outline" | "arrow-up-circle-outline";
+  tone: "green" | "blue";
+  title: string;
+  time: string;
+  amount: string;
+  amountColor: string;
+  pill?: ReactNode;
+  last?: boolean;
+}) {
+  return (
+    <View
+      accessible
+      accessibilityLabel={`${title}, ${amount}, ${time}`}
+      style={{
+        flexDirection: "row",
+        alignItems: "center",
+        gap: spacing.md,
+        padding: spacing.lg,
+        borderBottomWidth: last ? 0 : 1,
+        borderBottomColor: colors.divider,
+      }}
+    >
+      <IconBadge icon={icon} tone={tone} size={38} />
+      <View style={{ flex: 1 }}>
+        <Text style={typography.label} numberOfLines={1}>
+          {title}
+        </Text>
+        <Text style={[typography.caption, { marginTop: 2 }]}>{time}</Text>
       </View>
+      <View style={{ alignItems: "flex-end", gap: 4 }}>
+        <Text style={{ color: amountColor, fontWeight: "800", fontSize: 15 }}>{amount}</Text>
+        {pill}
+      </View>
+    </View>
+  );
+}
 
-      <Pressable onPress={() => navigation.getParent()?.getParent()?.navigate("PaymentIssue")} style={{ marginTop: 14, backgroundColor: "#FFF0F0", borderRadius: 17, padding: 16, flexDirection: "row", alignItems: "center" }}>
-        <View style={{ width: 40, height: 40, borderRadius: 12, backgroundColor: "#FEE4E2", alignItems: "center", justifyContent: "center" }}><Ionicons name="flag-outline" size={20} color="#D92D20" /></View>
-        <View style={{ flex: 1, marginLeft: 11 }}><Text style={{ color: "#B42318", fontWeight: "800", fontSize: 14 }}>Report a payment issue</Text><Text style={{ marginTop: 3, color: "#9B4A44", fontSize: 11 }}>Raise an issue if a reward or payment is missing.</Text></View>
-        <Ionicons name="chevron-forward" size={18} color="#D92D20" />
-      </Pressable>
+function WithdrawSheet({
+  visible,
+  balance,
+  onClose,
+  onAddBank,
+  onDone,
+}: {
+  visible: boolean;
+  balance: number;
+  onClose: () => void;
+  onAddBank: () => void;
+  onDone: () => void;
+}) {
+  const insets = useSafeAreaInsets();
+  const [amount, setAmount] = useState("");
+  const [error, setError] = useState("");
+  const [needsBank, setNeedsBank] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
 
-      <Text style={{ marginTop: 23, color: DARK, fontSize: 17, fontWeight: "800" }}>Recent payments</Text>
-      {history.slice(0, 6).map((item, index) => {
-        const status = String(item.status || "RECEIVED").toUpperCase();
-        const isPending = status === "PENDING" || status === "PROCESSING";
-        return <View key={item.id || index} style={{ marginTop: 10, backgroundColor: "#FFFFFF", borderRadius: 15, padding: 14, flexDirection: "row", alignItems: "center" }}><View style={{ width: 38, height: 38, borderRadius: 12, backgroundColor: isPending ? "#FFF5E6" : "#EAFBF4", alignItems: "center", justifyContent: "center" }}><Ionicons name={isPending ? "time-outline" : "checkmark-circle-outline"} size={19} color={isPending ? "#F79009" : "#039855"} /></View><View style={{ flex: 1, marginLeft: 11 }}><Text style={{ color: DARK, fontWeight: "700", fontSize: 13 }}>{item.description || "Referral Reward"}</Text><Text style={{ marginTop: 3, color: MUTED, fontSize: 10 }}>{item.createdAt || item.date || ""}</Text></View><View style={{ alignItems: "flex-end" }}><Text style={{ color: isPending ? "#B54708" : "#027A48", fontWeight: "900" }}>+₹{item.amount ?? "0.00"}</Text><Text style={{ marginTop: 3, color: MUTED, fontSize: 9 }}>{status}</Text></View></View>;
-      })}
+  const value = Number(amount);
+  const quick = [50, 100, 500].filter((n) => n < balance);
 
-      <Text style={{ marginTop: 23, color: DARK, fontSize: 17, fontWeight: "800" }}>Withdrawals</Text>
-      {withdrawals.slice(0, 4).map((item, index) => <View key={item.id || index} style={{ marginTop: 10, backgroundColor: "#FFFFFF", borderRadius: 15, padding: 14, flexDirection: "row", justifyContent: "space-between" }}><View><Text style={{ color: DARK, fontWeight: "700", fontSize: 13 }}>Withdrawal</Text><Text style={{ marginTop: 4, color: MUTED, fontSize: 10 }}>{item.createdAt || item.date || ""}</Text></View><View style={{ alignItems: "flex-end" }}><Text style={{ color: DARK, fontWeight: "900" }}>₹{item.amount ?? "0.00"}</Text><Text style={{ marginTop: 4, color: "#B54708", fontSize: 10, fontWeight: "700" }}>{item.status || "PENDING"}</Text></View></View>)}
-    </ScrollView>
+  const reset = () => {
+    setAmount("");
+    setError("");
+    setNeedsBank(false);
+  };
+
+  const close = () => {
+    reset();
+    onClose();
+  };
+
+  const submit = async () => {
+    Keyboard.dismiss();
+    if (!amount || !Number.isFinite(value) || value <= 0) {
+      setError("Enter an amount greater than ₹0.");
+      return;
+    }
+    if (value > balance) {
+      setError(`You can withdraw up to ${money(balance)}.`);
+      return;
+    }
+    try {
+      setSubmitting(true);
+      setError("");
+      setNeedsBank(false);
+      await withdraw(Math.round(value * 100) / 100);
+      reset();
+      Alert.alert("Withdrawal requested", `${money(value)} will be sent to your bank account. You can track it under Withdrawals.`);
+      onDone();
+    } catch (e: any) {
+      const message = String(e?.message || "Unable to withdraw. Please try again.");
+      if (/bank account/i.test(message)) {
+        setNeedsBank(true);
+        setError("Add your bank account first, then try again.");
+      } else {
+        setError(message);
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={close}>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+        <Pressable style={{ flex: 1, backgroundColor: "rgba(15,31,43,0.4)" }} onPress={close} accessibilityLabel="Close" />
+        <View
+          style={{
+            backgroundColor: colors.surface,
+            borderTopLeftRadius: radius.xl,
+            borderTopRightRadius: radius.xl,
+            padding: spacing.xl,
+            paddingBottom: insets.bottom + spacing.xl,
+          }}
+        >
+          <View style={{ alignSelf: "center", width: 40, height: 4, borderRadius: 2, backgroundColor: colors.border, marginBottom: spacing.lg }} />
+          <Text style={typography.title}>Withdraw to bank</Text>
+          <Text style={[typography.body, { marginTop: 4, marginBottom: spacing.lg }]}>Available: {money(balance)}</Text>
+
+          <Field
+            label="Amount"
+            icon="cash-outline"
+            value={amount}
+            onChangeText={(text) => {
+              setAmount(text.replace(/[^0-9.]/g, ""));
+              setError("");
+            }}
+            placeholder="0"
+            keyboardType="decimal-pad"
+            error={error && !needsBank ? error : undefined}
+            autoFocus
+          />
+
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, marginTop: -spacing.sm, marginBottom: spacing.lg }}>
+            {quick.map((n) => (
+              <Button key={n} label={money(n, { decimals: 0 })} variant="ghost" compact onPress={() => setAmount(String(n))} />
+            ))}
+            <Button label="Full balance" variant="secondary" compact onPress={() => setAmount(String(balance))} />
+          </View>
+
+          {needsBank ? (
+            <Banner tone="amber" message={error} actionLabel="Add bank" onAction={onAddBank} style={{ marginBottom: spacing.lg }} />
+          ) : null}
+
+          <Button label={value > 0 ? `Withdraw ${money(value)}` : "Withdraw"} onPress={submit} loading={submitting} />
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
   );
 }

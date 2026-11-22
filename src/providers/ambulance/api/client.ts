@@ -1,57 +1,48 @@
-import { getUserIdFromAccessToken } from "../../../auth/token";
 import { authFetch, getAccessToken } from "../../../auth/session";
+import { getUserIdFromAccessToken } from "../../../auth/token";
 import { BASE_URL } from "../config/env";
+import { ApiError } from "./errors";
 
-export function getAmbulanceAuth() {
+const DRIVER_ROLE = "AMBULANCE_DRIVER";
+
+function getDriverIdentity() {
   const accessToken = getAccessToken();
-  const userId = accessToken ? getUserIdFromAccessToken(accessToken) : "";
-
   if (!accessToken) {
     throw new Error("Access token is missing. Please login again.");
   }
 
+  const userId = getUserIdFromAccessToken(accessToken);
   if (!userId) {
     throw new Error("User ID (sub) is missing from access token.");
   }
 
-  return { userId };
+  return { accessToken, userId };
 }
 
-export async function ambulanceApi(
+export async function ambulanceApi<T>(
   path: string,
   options: RequestInit = {},
-) {
-  const { userId } = getAmbulanceAuth();
-  const url = `${BASE_URL}/api/v1/ambulance${path}`;
+): Promise<T> {
+  const { accessToken, userId } = getDriverIdentity();
 
-  console.log("AMBULANCE API:", options.method || "GET", url);
-  console.log("AMBULANCE USER ID (JWT sub):", userId);
-
-  const response = await authFetch(url, {
+  const response = await authFetch(`${BASE_URL}/api/v1/ambulance${path}`, {
     ...options,
     headers: {
+      Accept: "application/json",
       "Content-Type": "application/json",
-      "x-user-id": userId,
-      "x-user-role": "AMBULANCE_DRIVER",
+      Authorization: `Bearer ${accessToken}`,
+      "X-User-Id": userId,
+      "X-User-Role": DRIVER_ROLE,
       ...(options.headers || {}),
     },
   });
 
+  // Empty on 204 responses and when the driver has no current trip.
   const data = await response.json().catch(() => null);
 
-  console.log("AMBULANCE API STATUS:", response.status);
-  console.log("AMBULANCE API RESPONSE:", data);
-
   if (!response.ok) {
-    const error = new Error(
-      data?.message || data?.error?.message || "Ambulance API request failed",
-    );
-
-    (error as any).status = response.status;
-    (error as any).data = data;
-
-    throw error;
+    throw new ApiError(response.status, data);
   }
 
-  return data;
+  return data as T;
 }

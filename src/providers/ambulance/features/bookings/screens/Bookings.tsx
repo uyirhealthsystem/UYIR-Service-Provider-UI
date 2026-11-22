@@ -1,170 +1,278 @@
-import { Ionicons } from "@expo/vector-icons";
-import { useEffect, useState } from "react";
-import { ScrollView, Text, View } from "react-native";
+import { useFocusEffect } from "@react-navigation/native";
+import { useCallback, useRef, useState } from "react";
+import {
+  ActivityIndicator,
+  FlatList,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { getMyBookings } from "../../../api/bookings";
-import StatusPill from "../components/StatusPill";
+import { getTripHistory } from "../../../api/bookings";
+import { tripHistoryErrorMessage } from "../../../api/errors";
+import {
+  dropAddress,
+  emergencyLabel,
+  formatMoney,
+  formatTripDate,
+  pickupAddress,
+  statusLabel,
+  statusTone,
+} from "../../../domain/trip";
+import { colors, radius, spacing, typography } from "../../../theme";
+import type { Booking, BookingStatus } from "../../../types";
+import { Badge, Button, Card, EmptyState, ErrorBanner, ScreenHeader } from "../../../ui/components";
 
-export default function Bookings({ route }: any) {
-  const BLUE = "#1473E6";
-  const BG = "#F5F8FC";
-  const GREEN = "#17B26A";
-  const MUTED = "#6B7890";
-  const RED = "#E5484D";
-  const TEXT = "#10233F";
-  const serviceType = route.params?.serviceType || "AMBULANCE";
+const PAGE_SIZE = 20;
 
-  const [bookings, setBookings] = useState<any[]>([]);
+const FILTERS: { label: string; status?: BookingStatus }[] = [
+  { label: "All" },
+  { label: "Completed", status: "COMPLETED" },
+  { label: "Awaiting payment", status: "PAYMENT_PENDING" },
+  { label: "Cancelled", status: "CANCELLED" },
+];
 
-  useEffect(() => {
-    loadBookings();
+export default function Bookings() {
+  const [filter, setFilter] = useState<BookingStatus | undefined>(undefined);
+  const [bookings, setBookings] = useState<Booking[]>([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [error, setError] = useState("");
+  const nextPage = useRef(0);
+  // Answers for a filter the driver has already left are ignored.
+  const latestRequest = useRef(0);
+
+  const loadFirstPage = useCallback(async (status: BookingStatus | undefined) => {
+    latestRequest.current += 1;
+    const request = latestRequest.current;
+    try {
+      const result = await getTripHistory({ page: 0, size: PAGE_SIZE, status });
+      if (request !== latestRequest.current) return;
+      setBookings(result.bookings);
+      setTotal(result.totalBookings);
+      nextPage.current = 1;
+      setError("");
+    } catch (loadError) {
+      if (request === latestRequest.current) setError(tripHistoryErrorMessage(loadError));
+    } finally {
+      if (request === latestRequest.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
+    }
   }, []);
 
-  async function loadBookings() {
-    try {
-      const response = await getMyBookings();
-      const items = Array.isArray(response)
-        ? response
-        : response?.bookings || [];
-      setBookings(
-        items.map((item: any) => {
-          const pickup = item?.pickup || item?.pickupLocation || {};
-          const drop = item?.drop || item?.dropLocation || item?.hospital || {};
-          const rawStatus = String(item?.status || "NEW").toUpperCase();
+  useFocusEffect(
+    useCallback(() => {
+      void loadFirstPage(filter);
+    }, [filter, loadFirstPage]),
+  );
 
-          return {
-            id: String(item?.id || item?.bookingId || ""),
-            patient:
-              item?.contactName ||
-              item?.patientName ||
-              item?.patient?.name ||
-              "Patient",
-            serviceType,
-            date:
-              item?.appointmentDate ||
-              item?.scheduledAt?.slice?.(0, 10) ||
-              "Today",
-            time: item?.startTime || item?.scheduledAt?.slice?.(11, 16) || "",
-            patientAddress: pickup?.address || "Patient pickup location",
-            hospital:
-              drop?.name ||
-              drop?.hospitalName ||
-              item?.hospitalName ||
-              "Hospital",
-            amount: Number(item?.fare || item?.amount || 0),
-            status: rawStatus === "PAYMENT_PENDING" ? "PAYMENT" : rawStatus,
-          };
-        }),
-      );
-    } catch (error) {
-      console.log("AMBULANCE BOOKINGS ERROR:", error);
+  function selectFilter(status: BookingStatus | undefined) {
+    if (status === filter) return;
+    setBookings([]);
+    setTotal(0);
+    setError("");
+    setLoading(true);
+    setFilter(status);
+  }
+
+  async function loadMore() {
+    if (loadingMore || loading || refreshing || bookings.length >= total) return;
+    const request = latestRequest.current;
+    try {
+      setLoadingMore(true);
+      const result = await getTripHistory({
+        page: nextPage.current,
+        size: PAGE_SIZE,
+        status: filter,
+      });
+      if (request !== latestRequest.current) return;
+      nextPage.current += 1;
+      setTotal(result.totalBookings);
+      setBookings((current) => {
+        const known = new Set(current.map((booking) => booking.id));
+        return [...current, ...result.bookings.filter((booking) => !known.has(booking.id))];
+      });
+    } catch (loadError) {
+      if (request === latestRequest.current) setError(tripHistoryErrorMessage(loadError));
+    } finally {
+      setLoadingMore(false);
     }
   }
 
-  const visibleBookings = bookings.filter(
-    (booking) => booking.serviceType === serviceType,
-  );
+  function refresh() {
+    setRefreshing(true);
+    void loadFirstPage(filter);
+  }
+
+  function retry() {
+    setLoading(true);
+    setError("");
+    void loadFirstPage(filter);
+  }
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: BG }} edges={["top"]}>
-      <View style={{ padding: 16, paddingBottom: 4 }}>
-        <Text style={{ color: TEXT, fontSize: 23, fontWeight: "900" }}>
-          My Bookings
-        </Text>
-        <Text style={{ color: MUTED, fontSize: 11, marginTop: 4 }}>
-          Your patient transport history
-        </Text>
+    <SafeAreaView style={styles.page} edges={["top"]}>
+      <ScreenHeader
+        title="Trips"
+        subtitle={loading ? " " : total === 1 ? "1 trip" : `${total} trips`}
+      />
+
+      <View>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.filters}
+        >
+          {FILTERS.map(({ label, status }) => {
+            const selected = status === filter;
+            return (
+              <Pressable
+                key={label}
+                onPress={() => selectFilter(status)}
+                accessibilityRole="tab"
+                accessibilityState={{ selected }}
+                style={[styles.filter, selected ? styles.filterSelected : null]}
+              >
+                <Text style={[styles.filterText, selected ? styles.filterTextSelected : null]}>
+                  {label}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
       </View>
 
-      <ScrollView
-        contentContainerStyle={{ padding: 16, paddingTop: 8, gap: 10 }}
-      >
-        {visibleBookings.map((booking) => (
-          <View
-            key={booking.id}
-            style={{
-              backgroundColor: "#FFFFFF",
-              borderRadius: 16,
-              padding: 15,
-            }}
-          >
-            <View style={{ flexDirection: "row", alignItems: "center" }}>
-              <View
-                style={{
-                  width: 40,
-                  height: 40,
-                  borderRadius: 12,
-                  backgroundColor: "#EAF3FF",
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
-              >
-                <Ionicons
-                  name={
-                    booking.serviceType === "AMBULANCE"
-                      ? "medkit-outline"
-                      : "car-outline"
-                  }
-                  size={20}
-                  color={BLUE}
-                />
-              </View>
-              <View style={{ flex: 1, marginLeft: 10 }}>
-                <Text style={{ color: TEXT, fontSize: 13, fontWeight: "900" }}>
-                  {booking.id} • {booking.patient}
-                </Text>
-                <Text style={{ color: MUTED, fontSize: 10, marginTop: 3 }}>
-                  {booking.date} • {booking.time}
-                </Text>
-              </View>
-              <StatusPill
-                label={booking.status.replace(/_/g, " ")}
-                color={
-                  booking.status === "COMPLETED"
-                    ? GREEN
-                    : booking.status === "REJECTED"
-                      ? RED
-                      : BLUE
-                }
-              />
-            </View>
-
-            <View
-              style={{
-                marginTop: 12,
-                flexDirection: "row",
-                alignItems: "center",
-              }}
-            >
-              <Ionicons name="location-outline" size={15} color={BLUE} />
-              <Text
-                style={{ flex: 1, marginLeft: 6, color: TEXT, fontSize: 10 }}
-              >
-                {booking.patientAddress}
-              </Text>
-            </View>
-
-            <View
-              style={{
-                marginTop: 7,
-                flexDirection: "row",
-                alignItems: "center",
-              }}
-            >
-              <Ionicons name="business-outline" size={15} color={GREEN} />
-              <Text
-                style={{ flex: 1, marginLeft: 6, color: TEXT, fontSize: 10 }}
-              >
-                {booking.hospital}
-              </Text>
-              <Text style={{ color: TEXT, fontSize: 12, fontWeight: "900" }}>
-                ₹{booking.amount}
-              </Text>
-            </View>
-          </View>
-        ))}
-      </ScrollView>
+      <FlatList
+        data={bookings}
+        keyExtractor={(booking) => booking.id}
+        contentContainerStyle={styles.list}
+        refreshing={refreshing}
+        onRefresh={refresh}
+        onEndReached={loadMore}
+        onEndReachedThreshold={0.4}
+        renderItem={({ item }) => <TripCard booking={item} />}
+        ListHeaderComponent={
+          error && bookings.length > 0 ? <ErrorBanner message={error} /> : null
+        }
+        ListEmptyComponent={
+          loading ? (
+            <ActivityIndicator style={styles.loading} color={colors.blue} />
+          ) : error ? (
+            <EmptyState
+              icon="cloud-offline-outline"
+              title="Unable to load trips"
+              message={error}
+              action={<Button title="Try again" variant="secondary" compact onPress={retry} />}
+            />
+          ) : (
+            <EmptyState
+              icon="document-text-outline"
+              title="No trips here"
+              message="Trips you accept will appear in this list."
+            />
+          )
+        }
+        ListFooterComponent={
+          loadingMore ? <ActivityIndicator color={colors.blue} /> : null
+        }
+      />
     </SafeAreaView>
   );
 }
+
+function TripCard({ booking }: { booking: Booking }) {
+  const reason = emergencyLabel(booking.emergencyType);
+
+  return (
+    <Card>
+      <View style={styles.cardHeader}>
+        <View style={styles.cardTitle}>
+          <Text style={typography.label} numberOfLines={1}>
+            {booking.contactName || "Patient"}
+          </Text>
+          <Text style={typography.caption}>{formatTripDate(booking)}</Text>
+        </View>
+        <Badge label={statusLabel(booking.status)} tone={statusTone(booking.status)} />
+      </View>
+
+      <View style={styles.route}>
+        <View style={styles.timeline}>
+          <View style={[styles.dot, styles.dotPickup]} />
+          <View style={styles.line} />
+          <View style={[styles.dot, styles.dotDrop]} />
+        </View>
+        <View style={styles.addresses}>
+          <Text style={typography.body} numberOfLines={2}>
+            {pickupAddress(booking.pickup)}
+          </Text>
+          <Text style={typography.body} numberOfLines={2}>
+            {dropAddress(booking.drop)}
+          </Text>
+        </View>
+      </View>
+
+      <View style={styles.cardFooter}>
+        <Text style={typography.caption} numberOfLines={1}>
+          {reason ?? (booking.type === "SCHEDULED" ? "Scheduled trip" : "Emergency")}
+        </Text>
+        <Text style={styles.fare}>{formatMoney(booking.fare)}</Text>
+      </View>
+    </Card>
+  );
+}
+
+const styles = StyleSheet.create({
+  page: { flex: 1, backgroundColor: colors.background },
+  filters: {
+    paddingHorizontal: spacing.lg,
+    paddingBottom: spacing.md,
+    gap: spacing.sm,
+  },
+  filter: {
+    minHeight: 40,
+    paddingHorizontal: spacing.lg,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  filterSelected: { backgroundColor: colors.navy, borderColor: colors.navy },
+  filterText: { ...typography.label, color: colors.textSecondary },
+  filterTextSelected: { color: colors.white },
+  list: {
+    paddingHorizontal: spacing.lg,
+    paddingBottom: spacing.xl,
+    gap: spacing.md,
+    flexGrow: 1,
+  },
+  loading: { marginTop: spacing.xxl },
+  cardHeader: { flexDirection: "row", alignItems: "flex-start", gap: spacing.md },
+  cardTitle: { flex: 1 },
+  route: { flexDirection: "row", gap: spacing.md, marginTop: spacing.md },
+  timeline: { alignItems: "center", paddingVertical: 6 },
+  dot: { width: 10, height: 10, borderRadius: 5 },
+  dotPickup: { backgroundColor: colors.blue },
+  dotDrop: { backgroundColor: colors.green },
+  line: { flex: 1, width: 2, minHeight: 14, backgroundColor: colors.border, marginVertical: 2 },
+  addresses: { flex: 1, gap: spacing.md },
+  cardFooter: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: spacing.md,
+    marginTop: spacing.md,
+    paddingTop: spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: colors.divider,
+  },
+  fare: { ...typography.heading },
+});

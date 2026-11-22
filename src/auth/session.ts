@@ -7,9 +7,11 @@ let role = "";
 
 type TokenListener = (tokens: { accessToken: string; refreshToken: string }) => void;
 type ExpiredListener = () => void;
+type LogoutListener = () => void;
 
 const tokenListeners = new Set<TokenListener>();
 const expiredListeners = new Set<ExpiredListener>();
+const logoutListeners = new Set<LogoutListener>();
 
 export function setAuthSession(data: {
   accessToken?: string;
@@ -60,6 +62,18 @@ export function onSessionExpired(listener: ExpiredListener) {
   return () => {
     expiredListeners.delete(listener);
   };
+}
+
+/** Called when the user logs out, while the access token still works. Returns an unsubscribe function. */
+export function onLogout(listener: LogoutListener) {
+  logoutListeners.add(listener);
+  return () => {
+    logoutListeners.delete(listener);
+  };
+}
+
+export function notifyLogout() {
+  logoutListeners.forEach((l) => l());
 }
 
 export class SessionExpiredError extends Error {
