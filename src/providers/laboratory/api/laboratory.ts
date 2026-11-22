@@ -166,6 +166,27 @@ export function getHomeCollection(homeCollectionId: string) {
   return laboratoryApi(`/homecollection/${homeCollectionId}`);
 }
 
+export function generateSampleHandoverOtp(sampleId: string) {
+  return laboratoryApi(`/sample/${encodeURIComponent(sampleId)}/handover-otp/generate`, {
+    method: "POST",
+  });
+}
+
+export function updateLabSampleStatus(
+  sampleId: string,
+  payload: {
+    status: "RECEIVED" | "PROCESSING" | "REJECTED" | "COMPLETED";
+    condition?: "GOOD" | "DAMAGED" | "LEAKED" | "INSUFFICIENT" | "HEMOLYZED" | "REJECTED";
+    rejectionReason?: string;
+    notes?: string;
+  },
+) {
+  return laboratoryApi(`/sample/${encodeURIComponent(sampleId)}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
 /* =========================================================
    UPDATE APPOINTMENT
 ========================================================= */
