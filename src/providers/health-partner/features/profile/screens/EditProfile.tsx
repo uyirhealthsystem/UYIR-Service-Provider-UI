@@ -1,57 +1,224 @@
-import { Ionicons } from "@expo/vector-icons";
-import { useFocusEffect } from "@react-navigation/native";
-import { useCallback, useState } from "react";
-import { ActivityIndicator, Alert, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { useCallback, useEffect, useState } from "react";
+import { Alert, Text } from "react-native";
+
 import { getProfile, updateProfile } from "../../../api/profile";
+import { spacing, typography } from "../../../theme";
+import { Button, Card, ErrorBanner, Field, LoadingView, OptionSheet, Screen, ScreenHeader, SelectField } from "../../../ui/components";
+import {
+  dobToDisplay,
+  dobToIso,
+  GENDERS,
+  genderLabel,
+  isValidEmail,
+  isValidPhone,
+  isValidPincode,
+  maskDob,
+  normalizePhone,
+} from "../../../ui/format";
+import { LocationFields, useLocation } from "../../location/LocationFields";
+
+// PATCH /profile takes any subset of profile fields. Only changed fields are
+// sent: the server rejects "" for email / pincode / dateOfBirth, so a field
+// can be changed but not blanked once set. Location is replaced as a group
+// (districtId + optional blockId / villageId; omitted ones are cleared).
+
+type Form = {
+  fullName: string;
+  phone: string;
+  email: string;
+  dob: string;
+  gender: string;
+  addressLine1: string;
+  addressLine2: string;
+  city: string;
+  state: string;
+  pincode: string;
+};
+
+const EMPTY: Form = { fullName: "", phone: "", email: "", dob: "", gender: "", addressLine1: "", addressLine2: "", city: "", state: "", pincode: "" };
+
+function formFrom(p: any): Form {
+  return {
+    fullName: p?.fullName || "",
+    phone: p?.phone || "",
+    email: p?.email || "",
+    dob: dobToDisplay(p?.dateOfBirth),
+    gender: p?.gender || "",
+    addressLine1: p?.addressLine1 || "",
+    addressLine2: p?.addressLine2 || "",
+    city: p?.city || "",
+    state: p?.state || "",
+    pincode: p?.pincode || "",
+  };
+}
 
 export default function EditProfile({ navigation }: any) {
-  const [profile, setProfile] = useState<any>(null);
-  const [fullName, setFullName] = useState("");
-  const [phone, setPhone] = useState("");
-  const [email, setEmail] = useState("");
-  const [addressLine1, setAddressLine1] = useState("");
-  const [addressLine2, setAddressLine2] = useState("");
-  const [city, setCity] = useState("");
-  const [state, setState] = useState("");
-  const [pincode, setPincode] = useState("");
+  const [original, setOriginal] = useState<any>(null);
+  const [form, setForm] = useState<Form>(EMPTY);
+  const [errors, setErrors] = useState<Partial<Record<keyof Form | "district", string>>>({});
+  const [loadError, setLoadError] = useState("");
+  const [saveError, setSaveError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [genderPicker, setGenderPicker] = useState(false);
+  const location = useLocation();
+  const { reset: resetLocation } = location;
 
   const load = useCallback(async () => {
     try {
+      setLoadError("");
       const data = await getProfile();
-      setProfile(data);
-      setFullName(data?.fullName || ""); setPhone(data?.phone || ""); setEmail(data?.email || ""); setAddressLine1(data?.addressLine1 || ""); setAddressLine2(data?.addressLine2 || ""); setCity(data?.city || ""); setState(data?.state || ""); setPincode(data?.pincode || "");
-    } catch (error) { console.log("Edit profile load error:", error); }
-  }, []);
+      setOriginal(data);
+      setForm(formFrom(data));
+      resetLocation({ districtId: data?.districtId, blockId: data?.blockId, villageId: data?.villageId });
+    } catch (e: any) {
+      setLoadError(e?.message || "Unable to load your details.");
+    }
+  }, [resetLocation]);
 
-  useFocusEffect(useCallback(() => { load(); }, [load]));
+  useEffect(() => {
+    load();
+  }, [load]);
 
-  const save = async () => {
-    try {
-      setSaving(true);
-      await updateProfile({ fullName, phone, email, addressLine1, addressLine2, city, state, pincode });
-      Alert.alert("Saved", "Profile updated successfully.", [{ text: "OK", onPress: () => navigation.goBack() }]);
-    } catch (error: any) { Alert.alert("Unable to save", error?.message || "Please try again."); } finally { setSaving(false); }
+  const set = (key: keyof Form) => (text: string) => {
+    setForm((prev) => ({ ...prev, [key]: text }));
+    if (errors[key]) setErrors((prev) => ({ ...prev, [key]: undefined }));
   };
 
-  const field = (label: string, value: string, setter: (value: string) => void, placeholder: string, keyboardType: any = "default") => <View style={{ marginTop: 16 }}><Text style={{ color: "#344054", fontSize: 12, fontWeight: "700" }}>{label}</Text><TextInput value={value} onChangeText={setter} placeholder={placeholder} placeholderTextColor="#98A2B3" keyboardType={keyboardType} style={{ marginTop: 8, minHeight: 50, borderWidth: 1, borderColor: "#E4E7EC", borderRadius: 13, paddingHorizontal: 14, color: "#101828", fontSize: 13 }} /></View>;
+  const save = async () => {
+    const next: typeof errors = {};
+    if (!form.fullName.trim()) next.fullName = "Enter your full name.";
+    if (!isValidPhone(form.phone)) next.phone = "Enter a valid 10-digit mobile number.";
+    if (form.email.trim() && !isValidEmail(form.email)) next.email = "Enter a valid email address.";
+    if (original?.email && !form.email.trim()) next.email = "Email can be changed but not removed.";
+    if (form.dob && !dobToIso(form.dob)) next.dob = "Enter a real date as DD/MM/YYYY (age 18 or above).";
+    if (original?.dateOfBirth && !form.dob) next.dob = "Date of birth can be changed but not removed.";
+    if (form.pincode.trim() && !isValidPincode(form.pincode)) next.pincode = "Pincode is 6 digits.";
+    if (original?.pincode && !form.pincode.trim()) next.pincode = "Pincode can be changed but not removed.";
+    if (!location.value.districtId) next.district = "Select your district.";
+    setErrors(next);
+    if (Object.keys(next).length) return;
 
-  if (!profile && !fullName) return <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "#F5F7FB" }}><ActivityIndicator color="#1755E8" /></View>;
+    const wanted: Record<string, string> = {
+      fullName: form.fullName.trim(),
+      phone: normalizePhone(form.phone),
+      email: form.email.trim(),
+      dateOfBirth: form.dob ? (dobToIso(form.dob) as string) : "",
+      gender: form.gender,
+      addressLine1: form.addressLine1.trim(),
+      addressLine2: form.addressLine2.trim(),
+      city: form.city.trim(),
+      state: form.state.trim(),
+      pincode: form.pincode.trim(),
+    };
+    const patch: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(wanted)) {
+      if (value !== (original?.[key] || "") && value !== "") patch[key] = value;
+    }
+    const loc = location.value;
+    if (loc.districtId !== (original?.districtId || "") || loc.blockId !== (original?.blockId || "") || loc.villageId !== (original?.villageId || "")) {
+      patch.districtId = loc.districtId;
+      patch.blockId = loc.blockId || null;
+      patch.villageId = loc.villageId || null;
+    }
 
-  return <ScrollView style={{ flex: 1, backgroundColor: "#F5F7FB" }} contentContainerStyle={{ padding: 20, paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
-    <Pressable onPress={() => navigation.goBack()} style={{ width: 40, height: 40, borderRadius: 12, backgroundColor: "#FFFFFF", alignItems: "center", justifyContent: "center" }}><Ionicons name="arrow-back" size={21} color="#101828" /></Pressable>
-    <Text style={{ marginTop: 22, color: "#101828", fontSize: 26, fontWeight: "900" }}>Personal Information</Text>
-    <Text style={{ marginTop: 5, color: "#667085", fontSize: 13 }}>Keep your Health Partner details up to date.</Text>
-    <View style={{ marginTop: 20, backgroundColor: "#FFFFFF", borderRadius: 19, padding: 18 }}>
-      {field("Full Name", fullName, setFullName, "Full name")}
-      {field("Phone", phone, setPhone, "Mobile number", "phone-pad")}
-      {field("Email", email, setEmail, "Email address", "email-address")}
-      {field("Address Line 1", addressLine1, setAddressLine1, "House / street")}
-      {field("Address Line 2", addressLine2, setAddressLine2, "Area / landmark")}
-      {field("City", city, setCity, "City")}
-      {field("State", state, setState, "State")}
-      {field("Pincode", pincode, setPincode, "Pincode", "number-pad")}
-      <Pressable onPress={save} disabled={saving} style={{ marginTop: 22, minHeight: 52, borderRadius: 13, backgroundColor: "#1755E8", alignItems: "center", justifyContent: "center" }}>{saving ? <ActivityIndicator color="#FFFFFF" /> : <Text style={{ color: "#FFFFFF", fontWeight: "800" }}>Save Changes</Text>}</Pressable>
-    </View>
-  </ScrollView>;
+    if (!Object.keys(patch).length) {
+      navigation.goBack();
+      return;
+    }
+
+    try {
+      setSaving(true);
+      setSaveError("");
+      await updateProfile(patch);
+      Alert.alert("Profile updated", "Your details have been saved.", [{ text: "OK", onPress: () => navigation.goBack() }]);
+    } catch (e: any) {
+      setSaveError(e?.message || "Unable to save. Please try again.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!original && !loadError) return <LoadingView label="Loading your details..." />;
+
+  return (
+    <Screen footer={original ? <Button label="Save changes" onPress={save} loading={saving} /> : undefined}>
+      <ScreenHeader title="Personal details" subtitle="Keep your details up to date so we can reach you." onBack={() => navigation.goBack()} />
+      {loadError ? <ErrorBanner message={loadError} onRetry={load} /> : null}
+      {saveError ? <ErrorBanner message={saveError} /> : null}
+      {location.error ? <ErrorBanner message={location.error} onRetry={location.retry} /> : null}
+
+      {original ? (
+        <>
+          <Text style={[typography.overline, { marginBottom: spacing.sm }]}>ABOUT YOU</Text>
+          <Card>
+            <Field label="Full name" required icon="person-outline" value={form.fullName} onChangeText={set("fullName")} autoCapitalize="words" error={errors.fullName} />
+            <Field
+              label="Mobile number"
+              required
+              icon="call-outline"
+              value={form.phone}
+              onChangeText={set("phone")}
+              keyboardType="phone-pad"
+              maxLength={14}
+              error={errors.phone}
+            />
+            <Field
+              label="Email"
+              icon="mail-outline"
+              value={form.email}
+              onChangeText={set("email")}
+              keyboardType="email-address"
+              autoCapitalize="none"
+              autoCorrect={false}
+              error={errors.email}
+            />
+            <Field
+              label="Date of birth"
+              icon="calendar-outline"
+              value={form.dob}
+              onChangeText={(t) => set("dob")(maskDob(t))}
+              placeholder="DD/MM/YYYY"
+              keyboardType="number-pad"
+              maxLength={10}
+              error={errors.dob}
+            />
+            <SelectField label="Gender" icon="male-female-outline" value={genderLabel(form.gender)} placeholder="Select gender" onPress={() => setGenderPicker(true)} />
+          </Card>
+
+          <Text style={[typography.overline, { marginTop: spacing.xl, marginBottom: spacing.sm }]}>WORKING AREA</Text>
+          <Card>
+            <LocationFields location={location} districtError={errors.district} />
+          </Card>
+
+          <Text style={[typography.overline, { marginTop: spacing.xl, marginBottom: spacing.sm }]}>ADDRESS</Text>
+          <Card>
+            <Field label="House / street" value={form.addressLine1} onChangeText={set("addressLine1")} placeholder="e.g. 5 Temple Road" />
+            <Field label="Area / landmark" value={form.addressLine2} onChangeText={set("addressLine2")} placeholder="e.g. Near bus stand" />
+            <Field label="City / town" value={form.city} onChangeText={set("city")} autoCapitalize="words" />
+            <Field label="State" value={form.state} onChangeText={set("state")} autoCapitalize="words" placeholder="e.g. Tamil Nadu" />
+            <Field
+              label="Pincode"
+              value={form.pincode}
+              onChangeText={(t) => set("pincode")(t.replace(/\D/g, ""))}
+              keyboardType="number-pad"
+              maxLength={6}
+              error={errors.pincode}
+            />
+          </Card>
+        </>
+      ) : null}
+
+      <OptionSheet
+        visible={genderPicker}
+        title="Gender"
+        options={GENDERS}
+        selectedId={form.gender}
+        onSelect={(id) => {
+          set("gender")(id);
+          setGenderPicker(false);
+        }}
+        onClose={() => setGenderPicker(false)}
+      />
+    </Screen>
+  );
 }

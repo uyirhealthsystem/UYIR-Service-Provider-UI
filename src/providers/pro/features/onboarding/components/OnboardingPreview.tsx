@@ -24,6 +24,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { colors, radius, shadow, spacing, typography } from "../../../theme";
 import { Button, Card, HeaderIconButton, IconBadge } from "../../../ui/components";
 import { optionLabel } from "../../../ui/format";
+import { scheduleToText } from "./ScheduleEditor";
 
 export default function OnboardingPreview({ navigation, route }: any) {
   const form = route.params?.form || {};
@@ -40,12 +41,16 @@ export default function OnboardingPreview({ navigation, route }: any) {
     yearsOfExperience: form.doctorExperience,
     consultationFee: form.doctorFee,
     availability: form.doctorAvailability,
-    customTimings: form.doctorCustomTimings,
+    customTimings: form.doctorAvailability === "CUSTOM_TIMINGS" ? scheduleToText(form.doctorSchedule ?? form.doctorCustomTimings) : undefined,
     engagementType: form.doctorEngagement,
     doctorCategory: form.doctorCategory,
     phone: form.doctorPhone,
     email: form.doctorEmail,
     department: form.doctorDepartment,
+    teleconsultation: form.doctorTeleconsultation,
+    eSignature: typeof form.doctorESignature === "string" && form.doctorESignature.startsWith("data:image")
+      ? "Signed"
+      : form.doctorTeleconsultation === true ? "Not collected - needed for teleconsultation" : undefined,
   };
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
@@ -59,11 +64,7 @@ export default function OnboardingPreview({ navigation, route }: any) {
       title: "Basic Information",
       fields: [
         ["Hospital Name", payload.hospitalName],
-        [
-          "Hospital Insured Against Damage",
-          payload.operations?.hospitalInsured,
-        ],
-        ["Registration Number", payload.registrationNumber],
+        ["Hospital Registration Number", payload.registrationNumber],
         ["Ownership Type", payload.ownershipType],
         ["Hospital Type", payload.hospitalType],
       ],
@@ -134,6 +135,7 @@ export default function OnboardingPreview({ navigation, route }: any) {
           "Management Software",
           payload.operations?.hospitalManagementSoftwareInUse,
         ],
+        ["Hospital Insured Against Damage", payload.operations?.hospitalInsured],
         [
           "Insurance Companies Accepted for Patients",
           payload.operations?.empanelledInsuranceCompanies,
@@ -160,19 +162,21 @@ export default function OnboardingPreview({ navigation, route }: any) {
             name: "Doctor Name",
             dateOfBirth: "Date of Birth",
             sex: "Sex",
-            tnmcNumber: "TNMC Registration Number",
+            tnmcNumber: "Doctor Registration Number",
             qualifications: "Qualifications",
             specialties: "Specialties",
             emergencyConditionsHandled: "Emergency Conditions Handled",
             yearsOfExperience: "Years of Experience",
             consultationFee: "Consultation Fee",
             availability: "Availability",
-            customTimings: "Custom Timings",
+            customTimings: "Working Hours",
             engagementType: "Engagement Type",
             doctorCategory: "Doctor Category",
             phone: "Mobile Number",
             email: "Email",
             department: "Department",
+            teleconsultation: "Provides Teleconsultation",
+            eSignature: "E-signature",
           } as Record<string, string>
         )[key] ||
           key.replace(/([A-Z])/g, " $1").replace(/^./, (c) => c.toUpperCase()),

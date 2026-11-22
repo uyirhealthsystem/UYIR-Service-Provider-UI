@@ -1,16 +1,8 @@
 import { healthPartnerApi } from "./client";
 
-export function createCitizenReferral(referredUserId: string, referralCode: string) {
-  return healthPartnerApi("/referrals", {
-    method: "POST",
-    body: JSON.stringify({
-      referralCode,
-      referredUserId,
-      referredType: "CITIZEN",
-    }),
-  });
-}
-
+// Citizen referrals are created by userservice when a villager signs up with
+// the HP's code (the HP service removed POST /referrals), so the app only
+// reads them.
 export function getReferrals() {
   return healthPartnerApi("/referrals");
 }

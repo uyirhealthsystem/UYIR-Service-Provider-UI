@@ -2,6 +2,7 @@ import { File } from "expo-file-system";
 import { BASE_URL, HOSPITAL_API_URL } from "../config/env";
 import { getProUserId, proApi } from "./client";
 import { authFetch, getAccessToken, getAuthUserId, getAuthRole } from "../../../auth/session";
+import { scheduleToText } from "../features/onboarding/components/ScheduleEditor";
 
 export async function uploadProHospitalImages(
   proHospitalId: string,
@@ -126,6 +127,25 @@ export async function resendHospitalClaimCode(hospitalId: string) {
 }
 
 /**
+ * GET /api/v1/hospital/{id} - the hospital record created at onboarding (address,
+ * contact details, facilities...). The PRO service only keeps its id.
+ */
+export async function getHospitalById(hospitalId: string) {
+  const token = getAccessToken();
+  const userId = getAuthUserId();
+  const response = await authFetch(`${HOSPITAL_API_URL}/api/v1/hospital/${encodeURIComponent(hospitalId)}`, {
+    headers: {
+      Accept: "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(userId ? { "X-User-Id": userId, "X-User-Role": getAuthRole() || "PRO" } : {}),
+    },
+  });
+  const data = await response.json().catch(() => null);
+  if (!response.ok) throw new Error(data?.message || data?.error?.message || `Hospital API returned ${response.status}`);
+  return data?.data ?? data;
+}
+
+/**
  * The hospital API returns the full created hospital record (optionally wrapped
  * in `data` / `hospital`). Pull its ID from whichever field the backend uses.
  */
@@ -239,6 +259,7 @@ function toStaff(value: any) {
 }
 
 export function buildHospitalPayload(form: any) {
+  const pcpndt = form.usgAvailable === true ? String(form.pcpndtRegistrationNumber || "").trim() : "";
   const payload: any = {
     hospitalName: String(form.hospitalName || "").trim(),
     registrationNumber: String(form.registrationNumber || "").trim(),
@@ -249,7 +270,7 @@ export function buildHospitalPayload(form: any) {
       city: String(form.city || "").trim(),
       district: String(form.district || "").trim(),
       state: String(form.state || "").trim(),
-      country: String(form.country || "").trim(),
+      country: "India",
       pincode: String(form.pincode || "").trim(),
       ...(toNumber(form.longitude) !== undefined && toNumber(form.latitude) !== undefined ? {
         location: { type: "Point", coordinates: [toNumber(form.longitude), toNumber(form.latitude)] },
@@ -274,9 +295,11 @@ export function buildHospitalPayload(form: any) {
         scanCentre: form.scanCentreAvailable === true,
 
       },
-      ...((form.labAvailable === true || form.scanCentreAvailable === true) ? { labDetails: {
+      ...((form.labAvailable === true || form.scanCentreAvailable === true || pcpndt) ? { labDetails: {
         ...(form.labAvailable === true ? { labName: String(form.labName || "").trim(), qualification: String(selectedOrOther(form.labQualification, form.labQualificationOther) || "").trim(), facilities: toArrayWithOther(form.labFacilities, form.labFacilitiesOther) } : {}),
-        ...(form.scanCentreAvailable === true ? { scanCentreName: String(form.scanCentreName || "").trim(), pcpndtRegistrationNumber: String(form.pcpndtRegistrationNumber || "").trim() } : {}),
+        ...(form.scanCentreAvailable === true ? { scanCentreName: String(form.scanCentreName || "").trim() } : {}),
+        // Asked only when the hospital has USG (PCPNDT Act); dropped if USG was later set to No.
+        ...(pcpndt ? { pcpndtRegistrationNumber: pcpndt } : {}),
       } } : {}),
     },
     emergencyServices: {
@@ -330,6 +353,7 @@ export function buildDoctorPayload(form: any, hospitalId: string) {
   // The hospital service's DoctorRequest stores `age`, not a date of birth -
   // a dateOfBirth field alone is silently dropped. Send both.
   const age = ageFromDob(form.doctorDob);
+  const eSign = typeof form.doctorESignature === "string" && form.doctorESignature.startsWith("data:image") ? form.doctorESignature : "";
   return {
     name: String(form.doctorName || "").trim(),
     ...(age !== undefined ? { age } : {}),
@@ -341,9 +365,13 @@ export function buildDoctorPayload(form: any, hospitalId: string) {
     emergencyConditionsHandled: emergencyConditions,
     ...(toNumber(form.doctorExperience) !== undefined ? { yearsOfExperience: toNumber(form.doctorExperience) } : {}),
     ...(fee !== undefined ? { consultationFee: fee } : {}),
-    availability: { type: form.doctorAvailability || "CUSTOM_TIMINGS", ...(form.doctorAvailability === "CUSTOM_TIMINGS" ? { customTimings: String(form.doctorCustomTimings || "").trim() } : {}) },
+    availability: { type: form.doctorAvailability || "CUSTOM_TIMINGS", ...(form.doctorAvailability === "CUSTOM_TIMINGS" ? { customTimings: scheduleToText(form.doctorSchedule ?? form.doctorCustomTimings) } : {}) },
     engagementType: form.doctorEngagement,
     ...(form.doctorCategory ? { doctorCategory: form.doctorCategory } : {}),
+    // Drawn signature as a PNG data URL (there is no file upload endpoint).
+    // Lombok's eSignDocumentUrl may bind as "esignDocumentUrl" under Jackson;
+    // the server ignores whichever key it doesn't use.
+    ...(eSign ? { eSignDocumentUrl: eSign, esignDocumentUrl: eSign } : {}),
     contactDetails: { phone: String(form.doctorPhone || "").trim() ? `${String(form.phoneCountryCode || "+91")}-${String(form.doctorPhone).trim()}` : "", ...(form.doctorEmail ? { email: String(form.doctorEmail).trim() } : {}) },
     hospitalAssociations: [{ hospitalId, department: String(selectedOrOther(form.doctorDepartment, form.doctorDepartmentOther) || specialties[0] || "").trim(), ...(fee !== undefined ? { consultationFee: fee } : {}), active: true }],
   };

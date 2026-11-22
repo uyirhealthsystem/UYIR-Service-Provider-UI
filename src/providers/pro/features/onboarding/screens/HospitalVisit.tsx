@@ -1,4 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect, useRoute } from "@react-navigation/native";
 import * as ImageManipulator from "expo-image-manipulator";
 import * as ImagePicker from "expo-image-picker";
@@ -42,6 +43,9 @@ export default function HospitalVisit({ navigation }: any) {
   const [saving, setSaving] = useState(false);
   const [capturing, setCapturing] = useState<"hospital" | "pro" | null>(null);
   const [error, setError] = useState("");
+  // A saved onboarding form for this hospital: the visit photos were already
+  // uploaded (the form only opens after that), so the PRO can go straight back.
+  const [draft, setDraft] = useState<{ savedAt?: number; sectionIndex?: number } | null>(null);
   const hospitalShot = useRef<any>(null);
   const proShot = useRef<any>(null);
 
@@ -63,6 +67,23 @@ export default function HospitalVisit({ navigation }: any) {
   }, [proHospitalId]);
 
   useFocusEffect(useCallback(() => { loadHospital(); }, [loadHospital]));
+
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+      AsyncStorage.getItem(`pro:onboarding:draft:${proHospitalId || "new"}`)
+        .then((saved) => { if (!cancelled) setDraft(saved ? JSON.parse(saved) : null); })
+        .catch(() => { if (!cancelled) setDraft(null); });
+      return () => { cancelled = true; };
+    }, [proHospitalId]),
+  );
+
+  const continueDraft = () =>
+    navigation.navigate("HospitalOnboarding", {
+      proHospitalId,
+      hospitalPoolId: hospital?.hospitalPoolId || route.params?.hospitalPoolId,
+      hospital,
+    });
 
   const capturePhoto = async (type: "hospital" | "pro") => {
     try {
@@ -237,6 +258,21 @@ export default function HospitalVisit({ navigation }: any) {
             </View>
           ) : null}
         </Card>
+
+        {draft ? (
+          <Card style={{ marginTop: spacing.md, borderColor: colors.green, backgroundColor: colors.greenSoft }}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md }}>
+              <Ionicons name="document-text" size={26} color={colors.green} />
+              <View style={{ flex: 1 }}>
+                <Text style={[typography.heading, { color: colors.green }]}>Onboarding in progress</Text>
+                <Text style={[typography.caption, { marginTop: 2 }]}>
+                  Your answers are saved{typeof draft.sectionIndex === "number" ? ` up to step ${draft.sectionIndex + 1}` : ""}{draft.savedAt ? ` · ${new Date(draft.savedAt).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })}` : ""}. Visit photos are already uploaded.
+                </Text>
+              </View>
+            </View>
+            <Button label="Continue onboarding" icon="arrow-forward" onPress={continueDraft} style={{ marginTop: spacing.md }} />
+          </Card>
+        ) : null}
 
         {/* Step 1 - photos */}
         <StepTitle number={1} title="Capture two photos" done={photosDone} caption={`${photoCount} of 2 captured · location enabled`} />

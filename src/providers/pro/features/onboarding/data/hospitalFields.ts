@@ -22,7 +22,18 @@ export type HospitalField = {
   optionsSource?: "specialties" | "emergencyConditions" | "labFacilities" | "doctorQualifications" | "designations";
   allowOther?: boolean;
   otherKey?: string;
+  /** Fixed list: never offer a free-text "Other". */
+  noOther?: boolean;
+  /** Small helper line under the label. */
+  hint?: string;
 };
+
+/** Uyir onboards hospitals in Tamil Nadu and Puducherry only. */
+export const DISTRICTS_BY_STATE: Record<string, string[]> = {
+  "Tamil Nadu": ["Ariyalur","Chengalpattu","Chennai","Coimbatore","Cuddalore","Dharmapuri","Dindigul","Erode","Kallakurichi","Kancheepuram","Kanniyakumari","Karur","Krishnagiri","Madurai","Mayiladuthurai","Nagapattinam","Namakkal","Nilgiris","Perambalur","Pudukkottai","Ramanathapuram","Ranipet","Salem","Sivaganga","Tenkasi","Thanjavur","Theni","Thoothukudi","Tiruchirappalli","Tirunelveli","Tirupathur","Tiruppur","Tiruvallur","Tiruvannamalai","Tiruvarur","Vellore","Viluppuram","Virudhunagar"],
+  Puducherry: ["Puducherry","Karaikal","Mahe","Yanam"],
+};
+export const STATES = Object.keys(DISTRICTS_BY_STATE);
 
 export type HospitalSection = {
   title: string;
@@ -33,10 +44,9 @@ export const hospitalFields: HospitalSection[] = [
   {
     title: "Basic Information",
     fields: [
-      { key: "hospitalInsured", label: "Is the hospital insured against damage?", type: "boolean", required: true },
       { key: "hospitalName", label: "Hospital Name", type: "text", required: true },
       { key: "email", label: "Hospital Email", type: "email", required: true },
-      { key: "registrationNumber", label: "Registration Number", type: "text", required: true },
+      { key: "registrationNumber", label: "Hospital registration number", type: "text", required: true, hint: "Clinical Establishment registration number from the state health department." },
       {
         key: "ownershipType",
         label: "Ownership Type",
@@ -58,9 +68,9 @@ export const hospitalFields: HospitalSection[] = [
     fields: [
       { key: "addressLine", label: "Address Line", type: "text", required: true },
       { key: "city", label: "City", type: "text", required: true },
-      { key: "district", label: "District", type: "select", required: true, options: ["Ariyalur","Chengalpattu","Chennai","Coimbatore","Cuddalore","Dharmapuri","Dindigul","Erode","Kallakurichi","Kancheepuram","Kanniyakumari","Karur","Krishnagiri","Madurai","Mayiladuthurai","Nagapattinam","Namakkal","Nilgiris","Perambalur","Pudukkottai","Ramanathapuram","Ranipet","Salem","Sivaganga","Tenkasi","Thanjavur","Theni","Thoothukudi","Tiruchirappalli","Tirunelveli","Tirupathur","Tiruppur","Tiruvallur","Tiruvannamalai","Tiruvarur","Vellore","Viluppuram","Virudhunagar"] },
-      { key: "state", label: "State", type: "select", required: true, options: ["Tamil Nadu"] },
-      { key: "country", label: "Country", type: "select", required: true, options: ["India"] },
+      { key: "state", label: "State", type: "select", required: true, options: STATES, noOther: true },
+      { key: "district", label: "District", type: "select", required: true, noOther: true },
+      { key: "country", label: "Country", type: "select", required: true, options: ["India"], noOther: true },
       { key: "pincode", label: "Pincode", type: "number", required: true },
     ],
   },
@@ -180,7 +190,7 @@ export const hospitalFields: HospitalSection[] = [
   {
     title: "Operations",
     fields: [
-      { key: "pcpndtRegistrationNumber", label: "PCPNDT Registration Number (optional)", type: "text", required: false },
+      { key: "hospitalInsured", label: "Is the hospital insured against damage?", type: "boolean", required: true, hint: "Property insurance for the building and equipment (fire, flood and so on)." },
       {
         key: "empanelledInsuranceCompanies",
         label: "Insurance Companies Accepted for Patients",
@@ -194,6 +204,7 @@ export const hospitalFields: HospitalSection[] = [
       { key: "dedicatedPharmacyAvailable", label: "Dedicated Pharmacy Available", type: "boolean", required: true },
       { key: "hospitalManagementSoftwareInUse", label: "Management Software in Use", type: "boolean", required: true },
       { key: "usgAvailable", label: "USG Available", type: "boolean", required: true },
+      { key: "pcpndtRegistrationNumber", label: "PCPNDT registration number", type: "text", required: true, showWhen: ["usgAvailable", true], hint: "Ultrasound (USG) centres are registered under the PCPNDT Act." },
       { key: "xrayAvailable", label: "X-Ray Available", type: "boolean", required: true },
       { key: "ctAvailable", label: "CT Available", type: "boolean", required: true },
       { key: "mriAvailable", label: "MRI Available", type: "boolean", required: true },
@@ -254,17 +265,20 @@ export const hospitalFields: HospitalSection[] = [
       { key: "doctorName", label: "Doctor full name", type: "text", required: true },
       { key: "doctorDob", label: "Date of Birth", type: "text", required: true },
       { key: "doctorSex", label: "Sex", type: "select", required: true, options: ["MALE", "FEMALE", "OTHER"] },
-      { key: "tnmcNumber", label: "TNMC registration number", type: "text", required: true },
+      { key: "tnmcNumber", label: "Doctor registration number", type: "text", required: true, hint: "Tamil Nadu Medical Council (TNMC) or Puducherry Medical Council number." },
       { key: "doctorQualifications", label: "Qualifications", type: "multiSelect", optionsSource: "doctorQualifications", required: true, itemLabel: "Qualification" },
       { key: "doctorSpecialties", label: "Doctor specialties", type: "multiSelect", optionsSource: "specialties", required: true, itemLabel: "Specialty" },
       { key: "doctorEmergencyConditions", label: "Emergency conditions handled", type: "multiSelect", optionsSource: "emergencyConditions", itemLabel: "Condition" },
       { key: "doctorExperience", label: "Years of experience", type: "number" },
       { key: "doctorFee", label: "Consultation fee (₹)", type: "number" },
       { key: "doctorAvailability", label: "Availability", type: "select", required: true, options: ["CUSTOM_TIMINGS", "WHATSAPP_BUSINESS_HOURS"] },
-      { key: "doctorCustomTimings", label: "Custom timings", type: "text", showWhen: ["doctorAvailability", "CUSTOM_TIMINGS"] },
+      { key: "doctorSchedule", label: "Working hours", type: "text", required: true, showWhen: ["doctorAvailability", "CUSTOM_TIMINGS"] },
       { key: "doctorEngagement", label: "Engagement type", type: "select", required: true, options: ["REGULAR", "ON_CALL"] },
       { key: "doctorCategory", label: "Doctor category", type: "select", options: ["PRIMARY", "FREELANCER"] },
       { key: "doctorPhone", label: "Doctor mobile number", type: "phone", required: true },
+      { key: "doctorEmail", label: "Doctor email", type: "email", required: true, hint: "Used for the doctor's Uyir account." },
+      { key: "doctorTeleconsultation", label: "Will the doctor provide teleconsultation?", type: "boolean" },
+      { key: "doctorESignature", label: "Doctor e-signature", type: "text" },
       { key: "doctorDepartment", label: "Hospital department", type: "select", optionsSource: "specialties" },
     ],
   },

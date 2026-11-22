@@ -160,7 +160,12 @@ export async function completeProviderLogin(
     } catch (checkError: any) {
       console.log("HP registration check error:", checkError);
 
-      if (checkError?.status === 404) {
+      // The HP service answers a missing profile with 400
+      // { message: "Health Partner not found" }, not 404.
+      if (
+        checkError?.status === 404 ||
+        (checkError?.status === 400 && isHealthPartnerProfileMissing(checkError?.data))
+      ) {
         navigation.replace("HealthPartnerRegistration", {
           sub: userId,
           role,

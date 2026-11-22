@@ -1,8 +1,8 @@
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useNavigation, useRoute } from "@react-navigation/native";
+import { useFocusEffect, useNavigation, useRoute } from "@react-navigation/native";
 import * as Location from "expo-location";
-import { useEffect, useRef, useState, type ComponentProps, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ComponentProps, type ReactNode } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -22,7 +22,11 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors, radius, shadow, spacing, typography } from "../../../theme";
 import { Button } from "../../../ui/components";
 import { ENUM_FIELDS, optionLabel, splitHospitalName } from "../../../ui/format";
-import { hospitalFields, type HospitalField } from "../data/hospitalFields";
+import { DISTRICTS_BY_STATE, hospitalFields, type HospitalField } from "../data/hospitalFields";
+import { normalizeDistrict, resolvePincodeDistrict } from "../data/pincodeDistricts";
+import DobPicker from "./DobPicker";
+import ScheduleEditor, { isSchedule, scheduleError } from "./ScheduleEditor";
+import SignaturePad from "./SignaturePad";
 import { EMERGENCY_OPTIONS, SPECIALTY_OPTIONS } from "../data/onboardingOptions";
 
 // Hospital onboarding form (9 steps, defined in data/hospitalFields.ts).
@@ -65,8 +69,14 @@ const SECTION_META: Record<string, { icon: any; hint: string }> = {
 
 const emptyStaff = (): StaffMember => ({ name: "", mobile: "", designation: "", designationOther: "" });
 const draftKey = (proHospitalId?: string) => `pro:onboarding:draft:${proHospitalId || "new"}`;
-const isoDate = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 
+/** GPS / pincode lookups say "Pondicherry", "TAMILNADU" and so on - map onto the two states Uyir covers. */
+function normalizeState(raw?: string): string {
+  const text = String(raw || "").toLowerCase().replace(/[^a-z]/g, "");
+  if (text.includes("tamil")) return "Tamil Nadu";
+  if (text.includes("puducherry") || text.includes("pondicherry")) return "Puducherry";
+  return "";
+}
 export default function HospitalOnboardingForm() {
   const navigation = useNavigation<any>();
   const route = useRoute<any>();
@@ -74,7 +84,7 @@ export default function HospitalOnboardingForm() {
   const proHospitalId: string | undefined = route.params?.proHospitalId;
 
   const [sectionIndex, setSectionIndex] = useState(0);
-  const [form, setForm] = useState<Record<string, any>>({ websiteProtocol: "https://", phoneCountryCode: "+91", udhsStaff: [emptyStaff(), emptyStaff()] });
+  const [form, setForm] = useState<Record<string, any>>({ websiteProtocol: "https://", phoneCountryCode: "+91", country: "India", udhsStaff: [emptyStaff(), emptyStaff()] });
   const [error, setError] = useState("");
   const [errorKey, setErrorKey] = useState<string | null>(null);
   const [locationLoading, setLocationLoading] = useState(false);
@@ -83,9 +93,10 @@ export default function HospitalOnboardingForm() {
   const [sheetSearch, setSheetSearch] = useState("");
   const [staffDesignationIndex, setStaffDesignationIndex] = useState<number | null>(null);
   const [showDobPicker, setShowDobPicker] = useState(false);
-  const [dobMonth, setDobMonth] = useState(new Date(1985, 0, 1));
   const [draftRestored, setDraftRestored] = useState(false);
   const draftLoaded = useRef(false);
+  const latest = useRef({ form, sectionIndex });
+  latest.current = { form, sectionIndex };
   const scrollRef = useRef<ScrollView>(null);
 
   const section = hospitalFields[sectionIndex];
@@ -104,7 +115,7 @@ export default function HospitalOnboardingForm() {
         if (saved && !cancelled) {
           const draft = JSON.parse(saved);
           if (draft?.form) {
-            setForm((current) => ({ ...current, ...draft.form }));
+            setForm((current) => ({ ...current, ...draft.form, country: "India" }));
             if (typeof draft.sectionIndex === "number") setSectionIndex(Math.min(draft.sectionIndex, hospitalFields.length - 1));
             setDraftRestored(true);
           }
@@ -121,13 +132,21 @@ export default function HospitalOnboardingForm() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [proHospitalId]);
 
-  useEffect(() => {
+  const saveDraft = useCallback(() => {
     if (!draftLoaded.current) return;
-    const id = setTimeout(() => {
-      AsyncStorage.setItem(draftKey(proHospitalId), JSON.stringify({ form, sectionIndex, savedAt: Date.now() })).catch(() => {});
-    }, 500);
+    const { form: f, sectionIndex: i } = latest.current;
+    AsyncStorage.setItem(draftKey(proHospitalId), JSON.stringify({ form: f, sectionIndex: i, savedAt: Date.now() })).catch((e) => console.log("Draft save failed:", e));
+  }, [proHospitalId]);
+
+  useEffect(() => {
+    const id = setTimeout(saveDraft, 400);
     return () => clearTimeout(id);
-  }, [form, sectionIndex, proHospitalId]);
+  }, [form, sectionIndex, saveDraft]);
+
+  // Leaving the screen (back, review, closing the app) must not drop the last
+  // keystrokes still waiting on the debounce above - write the draft at once.
+  useFocusEffect(useCallback(() => saveDraft, [saveDraft]));
+  useEffect(() => saveDraft, [saveDraft]);
 
   // Each step starts at the top.
   useEffect(() => { scrollRef.current?.scrollTo({ y: 0, animated: false }); }, [sectionIndex]);
@@ -144,7 +163,11 @@ export default function HospitalOnboardingForm() {
   // ── Form state helpers ─────────────────────────────────────────────────────
   const clearError = () => { setError(""); setErrorKey(null); };
   const updateField = (key: string, value: any) => {
-    setForm((current) => ({ ...current, [key]: value }));
+    setForm((current) => {
+      const next = { ...current, [key]: value };
+      if (key === "state" && !(DISTRICTS_BY_STATE[value] || []).includes(current.district)) next.district = "";
+      return next;
+    });
     if (error) clearError();
   };
   const isVisible = (field: HospitalField) => {
@@ -178,13 +201,21 @@ export default function HospitalOnboardingForm() {
       setPincodeLoading(true);
       const response = await fetch(`https://api.postalpincode.in/pincode/${pincode}`);
       const data = await response.json();
-      const postOffice = data?.[0]?.PostOffice?.[0];
+      const postOffices = Array.isArray(data?.[0]?.PostOffice) ? data[0].PostOffice : [];
+      const postOffice = postOffices[0];
       if (!postOffice) throw new Error("Pincode not found");
+      const state = normalizeState(postOffice.State);
+      if (!state) {
+        setError(`This pincode is in ${postOffice.State}. Uyir onboards hospitals in Tamil Nadu and Puducherry only.`);
+        setErrorKey("pincode");
+        return;
+      }
       setForm((current) => ({
         ...current,
-        district: postOffice.District || current.district || "",
-        state: postOffice.State || current.state || "",
-        country: postOffice.Country || "India",
+        state,
+        // India Post still lists pre-split districts (627804 -> Tirunelveli, really Tenkasi): resolve by taluk.
+        district: resolvePincodeDistrict(postOffices, state) || (current.state === state ? current.district : "") || "",
+        country: "India",
         city: current.city || postOffice.Block || "",
       }));
     } catch (lookupError) {
@@ -212,10 +243,13 @@ export default function HospitalOnboardingForm() {
         if (place) {
           const city = place.city || place.district || place.subregion || place.region || "";
           const district = place.district || place.subregion || place.city || "";
+          const state = normalizeState(place.region || undefined);
           if (city) next.city = city;
-          if (district) next.district = district;
-          if (place.region) next.state = place.region;
-          if (place.country) next.country = place.country;
+          if (state) {
+            next.state = state;
+            const matched = normalizeDistrict(district, state);
+            if (matched) next.district = matched;
+          }
           if (place.postalCode) next.pincode = place.postalCode.replace(/\D/g, "").slice(0, 6);
         }
       } catch (geocodeError) {
@@ -270,6 +304,12 @@ export default function HospitalOnboardingForm() {
         if (list.length !== getList(field.key).length) return fail(`Complete or remove the empty ${field.itemLabel || "item"}`);
         continue;
       }
+      if (field.key === "doctorSchedule") {
+        const problem = scheduleError(value);
+        if (problem) return fail(problem);
+        continue;
+      }
+      if (field.key === "doctorESignature") continue;
       if (field.type === "staffList") {
         const staff = getStaff(field.key);
         if (field.required && staff.length < 2) return fail("Add at least 2 UDHS staff members");
@@ -284,7 +324,7 @@ export default function HospitalOnboardingForm() {
       if (field.required && textValue === "") return fail(field.type === "boolean" ? `Answer: ${field.label}` : `${field.label} is required`);
       if (textValue === "") continue;
       if (value === "Other" && !String(form[`${field.key}Other`] || "").trim()) return fail(`Type the other ${field.label.toLowerCase()}`);
-      if (field.key === "email" && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(textValue)) return fail("Enter a valid email address");
+      if (field.type === "email" && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(textValue)) return fail("Enter a valid email address");
       if (field.key === "website" && !/^[^\s.]+(?:\.[^\s.]+)+(?::\d+)?(?:\/[^\s]*)?$/i.test(textValue.replace(/^https?:\/\//i, ""))) return fail("Enter a valid website address");
       if (field.type === "phone" && !/^\d{10}$/.test(textValue)) return fail(`${field.label} must have exactly 10 digits`);
       if (field.key === "pincode" && !/^\d{6}$/.test(textValue)) return fail("Pincode must have exactly 6 digits");
@@ -316,16 +356,21 @@ export default function HospitalOnboardingForm() {
     else confirmLeave();
   };
 
-  useEffect(() => {
-    const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
-      if (sheet || showDobPicker) { setSheet(null); setShowDobPicker(false); return true; }
-      if (sectionIndex > 0) { setSectionIndex((current) => Math.max(0, current - 1)); clearError(); return true; }
-      confirmLeave();
-      return true;
-    });
-    return () => subscription.remove();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sectionIndex, sheet, showDobPicker, navigation]);
+  // Only while this screen is on top. Before, Android back on the review screen
+  // ran this handler too: it stepped the hidden form backwards and, at step 1,
+  // offered to leave - instead of simply closing the review.
+  useFocusEffect(
+    useCallback(() => {
+      const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
+        if (sheet || showDobPicker) { setSheet(null); setShowDobPicker(false); return true; }
+        if (sectionIndex > 0) { setSectionIndex((current) => Math.max(0, current - 1)); clearError(); return true; }
+        confirmLeave();
+        return true;
+      });
+      return () => subscription.remove();
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [sectionIndex, sheet, showDobPicker, navigation]),
+  );
 
   // ── Options ────────────────────────────────────────────────────────────────
   const getSelectOptions = (field: HospitalField): Option[] => {
@@ -340,9 +385,10 @@ export default function HospitalOnboardingForm() {
     if (field.optionsSource === "labFacilities") return LAB_FACILITY_OPTIONS.map((item) => ({ value: item, label: item }));
     if (field.optionsSource === "doctorQualifications") return DOCTOR_QUALIFICATION_OPTIONS.map((item) => ({ value: item, label: item }));
     if (field.optionsSource === "designations") return UDHS_DESIGNATION_OPTIONS.map((item) => ({ value: item, label: item }));
-    const options = (field.options || []).map((item) => ({ value: item, label: optionLabel(item) }));
+    const source = field.key === "district" ? DISTRICTS_BY_STATE[form.state] || [] : field.options || [];
+    const options = source.map((item) => ({ value: item, label: optionLabel(item) }));
     // Enum fields must not get a free-text "Other": the hospital service rejects unknown values.
-    if (!ENUM_FIELDS.has(field.key) && !options.some((item) => item.value === "Other")) options.push({ value: "Other", label: "Other" });
+    if (!ENUM_FIELDS.has(field.key) && !field.noOther && !options.some((item) => item.value === "Other")) options.push({ value: "Other", label: "Other" });
     return options;
   };
 
@@ -404,6 +450,39 @@ export default function HospitalOnboardingForm() {
 
     if (STEPPER_KEYS.has(field.key)) return <Stepper value={value} onChange={(next) => updateField(field.key, next)} invalid={invalid} suffix={field.key === "doctorExperience" ? "years" : undefined} />;
 
+    if (field.key === "country") {
+      return (
+        <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, height: 52, paddingHorizontal: spacing.md, borderRadius: radius.md, backgroundColor: colors.surfaceMuted, borderWidth: 1, borderColor: colors.border }}>
+          <Ionicons name="flag-outline" size={18} color={colors.muted} />
+          <Text style={{ flex: 1, fontSize: 15, fontWeight: "600", color: colors.text }}>India</Text>
+          <Ionicons name="lock-closed-outline" size={15} color={colors.muted} />
+        </View>
+      );
+    }
+
+    if (field.key === "district" && !DISTRICTS_BY_STATE[form.state]) {
+      return <PickerButton label="Choose the state first" filled={false} invalid={invalid} icon="map-outline" onPress={() => { setError("Choose the state first"); setErrorKey("state"); }} />;
+    }
+
+    if (field.key === "doctorSchedule") return <ScheduleEditor value={value} invalid={invalid} onChange={(next) => updateField("doctorSchedule", next)} />;
+
+    if (field.key === "doctorESignature") {
+      const tele = form.doctorTeleconsultation === true;
+      return (
+        <View>
+          <View style={{ flexDirection: "row", gap: spacing.sm, padding: spacing.md, borderRadius: radius.md, marginBottom: spacing.sm, backgroundColor: tele ? colors.amberSoft : colors.surfaceMuted, borderWidth: tele ? 1 : 0, borderColor: "#F5C98B" }}>
+            <Ionicons name={tele ? "warning" : "information-circle-outline"} size={18} color={tele ? colors.amber : colors.muted} />
+            <Text style={{ flex: 1, fontSize: 13, lineHeight: 18, fontWeight: tele ? "700" : "500", color: tele ? colors.amber : colors.textSecondary }}>
+              {tele
+                ? "This doctor provides teleconsultation, so an e-signature is a must for signing e-prescriptions. Collect it now if you can - it can also be added later."
+                : "Optional. An e-signature is a must only for doctors who provide teleconsultation (to sign e-prescriptions)."}
+            </Text>
+          </View>
+          <SignaturePad value={value} required={tele} onChange={(next) => updateField("doctorESignature", next)} />
+        </View>
+      );
+    }
+
     if (field.type === "select") {
       const options = getSelectOptions(field);
       const chips = !field.optionsSource && options.length <= INLINE_CHOICE_MAX;
@@ -424,7 +503,7 @@ export default function HospitalOnboardingForm() {
               onPress={() => openSheet(field)}
             />
           )}
-          {value === "Other" && !ENUM_FIELDS.has(field.key) ? renderOtherInput(`${field.key}Other`, field.label) : null}
+          {value === "Other" && !ENUM_FIELDS.has(field.key) && !field.noOther ? renderOtherInput(`${field.key}Other`, field.label) : null}
         </View>
       );
     }
@@ -550,11 +629,7 @@ export default function HospitalOnboardingForm() {
           filled={!!value}
           invalid={invalid}
           icon="calendar-outline"
-          onPress={() => {
-            const initial = value ? new Date(`${value}T00:00:00`) : new Date(1985, 0, 1);
-            setDobMonth(new Date(initial.getFullYear(), initial.getMonth(), 1));
-            setShowDobPicker(true);
-          }}
+          onPress={() => setShowDobPicker(true)}
         />
       );
     }
@@ -585,22 +660,13 @@ export default function HospitalOnboardingForm() {
     );
   };
 
-  // ── Calendar for date of birth ─────────────────────────────────────────────
-  const monthStart = new Date(dobMonth.getFullYear(), dobMonth.getMonth(), 1);
-  const calendarStart = new Date(monthStart);
-  calendarStart.setDate(1 - monthStart.getDay());
-  const calendarDays = Array.from({ length: 42 }, (_, index) => { const day = new Date(calendarStart); day.setDate(calendarStart.getDate() + index); return day; });
-  const shiftDob = (years: number, months: number) => {
-    const next = new Date(dobMonth.getFullYear() + years, dobMonth.getMonth() + months, 1);
-    if (next <= new Date()) setDobMonth(next);
-  };
-
   const visibleFields = section.fields.filter(isVisible);
   const requiredLeft = visibleFields.filter((field) => {
     if (!field.required) return false;
     const v = form[field.key];
     if (field.type === "multiSelect" || field.type === "list") return getList(field.key).length === 0;
     if (field.type === "staffList") return getStaff(field.key).some((m) => !m.name.trim() || !m.mobile.trim() || !m.designation.trim());
+    if (field.key === "doctorSchedule") return !isSchedule(v);
     return v === undefined || v === null || String(v).trim() === "";
   }).length;
 
@@ -679,7 +745,7 @@ export default function HospitalOnboardingForm() {
 
         <View style={{ backgroundColor: colors.surface, borderRadius: radius.xl, borderWidth: 1, borderColor: colors.border, padding: spacing.lg, gap: spacing.xl, ...shadow.card }}>
           {visibleFields.map((field) => (
-            <FieldShell key={field.key} label={field.label} required={field.required} error={errorKey === field.key ? error : ""}>
+            <FieldShell key={field.key} label={field.label} hint={field.hint} required={field.required} error={errorKey === field.key ? error : ""}>
               {renderField(field)}
             </FieldShell>
           ))}
@@ -751,60 +817,21 @@ export default function HospitalOnboardingForm() {
       </Modal>
 
       {/* Date of birth */}
-      <Modal visible={showDobPicker} transparent animationType="fade" onRequestClose={() => setShowDobPicker(false)}>
-        <View style={{ flex: 1, backgroundColor: "rgba(15,27,51,0.45)", justifyContent: "center", padding: spacing.xl }}>
-          <View style={{ backgroundColor: colors.surface, borderRadius: radius.xl, padding: spacing.lg }}>
-            <Text style={typography.title}>Date of birth</Text>
-            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginVertical: spacing.md }}>
-              <View style={{ flexDirection: "row" }}>
-                <IconButton icon="play-back" label="Previous year" onPress={() => shiftDob(-1, 0)} />
-                <IconButton icon="chevron-back" label="Previous month" onPress={() => shiftDob(0, -1)} />
-              </View>
-              <Text style={{ fontSize: 15, fontWeight: "800", color: colors.text }}>{dobMonth.toLocaleDateString("en-IN", { month: "long", year: "numeric" })}</Text>
-              <View style={{ flexDirection: "row" }}>
-                <IconButton icon="chevron-forward" label="Next month" onPress={() => shiftDob(0, 1)} />
-                <IconButton icon="play-forward" label="Next year" onPress={() => shiftDob(1, 0)} />
-              </View>
-            </View>
-            <View style={{ flexDirection: "row", marginBottom: 4 }}>
-              {["S", "M", "T", "W", "T", "F", "S"].map((d, i) => (
-                <Text key={`${d}-${i}`} style={{ width: "14.28%", textAlign: "center", color: colors.muted, fontSize: 11, fontWeight: "800" }}>{d}</Text>
-              ))}
-            </View>
-            <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
-              {calendarDays.map((day) => {
-                const sameMonth = day.getMonth() === dobMonth.getMonth();
-                const future = day > new Date();
-                const selected = String(form.doctorDob || "") === isoDate(day);
-                return (
-                  <Pressable
-                    key={day.toISOString()}
-                    disabled={!sameMonth || future}
-                    onPress={() => { updateField("doctorDob", isoDate(day)); setShowDobPicker(false); }}
-                    style={{ width: "14.28%", height: 40, alignItems: "center", justifyContent: "center", borderRadius: 20, backgroundColor: selected ? colors.brand : "transparent", opacity: sameMonth && !future ? 1 : 0.25 }}
-                  >
-                    <Text style={{ color: selected ? colors.white : colors.text, fontSize: 13, fontWeight: selected ? "800" : "500" }}>{day.getDate()}</Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-            <Button label="Cancel" variant="ghost" onPress={() => setShowDobPicker(false)} style={{ marginTop: spacing.md }} />
-          </View>
-        </View>
-      </Modal>
+      <DobPicker visible={showDobPicker} value={form.doctorDob} onChange={(iso) => updateField("doctorDob", iso)} onClose={() => setShowDobPicker(false)} />
     </KeyboardAvoidingView>
   );
 }
 
 // ── Building blocks ──────────────────────────────────────────────────────────
 
-function FieldShell({ label, required, error, children }: { label: string; required?: boolean; error?: string; children: ReactNode }) {
+function FieldShell({ label, hint, required, error, children }: { label: string; hint?: string; required?: boolean; error?: string; children: ReactNode }) {
   return (
     <View>
-      <Text style={[typography.label, { marginBottom: spacing.sm }]}>
+      <Text style={[typography.label, { marginBottom: hint ? 2 : spacing.sm }]}>
         {label}
         {required ? <Text style={{ color: colors.red }}> *</Text> : <Text style={{ color: colors.muted, fontWeight: "500" }}> (optional)</Text>}
       </Text>
+      {hint ? <Text style={[typography.caption, { marginBottom: spacing.sm }]}>{hint}</Text> : null}
       {children}
       {error ? (
         <View style={{ flexDirection: "row", alignItems: "center", gap: 4, marginTop: 6 }}>
@@ -929,14 +956,14 @@ function Stepper({ value, onChange, invalid, suffix }: { value: unknown; onChang
   return (
     <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
       <StepButton icon="remove" label="Decrease" onPress={() => set(current - 1)} disabled={current <= 0} />
-      <View style={{ flex: 1, height: 52, borderRadius: radius.md, borderWidth: invalid ? 1.5 : 1, borderColor: invalid ? colors.red : colors.border, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6 }}>
+      <View style={{ minWidth: 88, height: 40, paddingHorizontal: spacing.sm, borderRadius: radius.md, borderWidth: invalid ? 1.5 : 1, borderColor: invalid ? colors.red : colors.border, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 4 }}>
         <TextInput
           value={value === undefined || value === null ? "" : String(value)}
           onChangeText={(text) => onChange(text.replace(/\D/g, "").slice(0, 4))}
           placeholder="0"
           placeholderTextColor={colors.muted}
           keyboardType="number-pad"
-          style={{ fontSize: 18, fontWeight: "800", color: colors.text, textAlign: "center", minWidth: 48, padding: 0 }}
+          style={{ fontSize: 16, fontWeight: "800", color: colors.text, textAlign: "center", minWidth: 36, padding: 0 }}
         />
         {suffix ? <Text style={[typography.caption, { fontWeight: "600" }]}>{suffix}</Text> : null}
       </View>
@@ -947,8 +974,8 @@ function Stepper({ value, onChange, invalid, suffix }: { value: unknown; onChang
 
 function StepButton({ icon, label, onPress, disabled }: { icon: any; label: string; onPress: () => void; disabled?: boolean }) {
   return (
-    <Pressable onPress={onPress} disabled={disabled} accessibilityLabel={label} style={({ pressed }) => ({ width: 52, height: 52, borderRadius: radius.md, backgroundColor: colors.brandSoft, alignItems: "center", justifyContent: "center", opacity: disabled ? 0.4 : pressed ? 0.75 : 1 })}>
-      <Ionicons name={icon} size={22} color={colors.brand} />
+    <Pressable onPress={onPress} disabled={disabled} accessibilityLabel={label} style={({ pressed }) => ({ width: 40, height: 40, borderRadius: radius.md, backgroundColor: colors.brandSoft, alignItems: "center", justifyContent: "center", opacity: disabled ? 0.4 : pressed ? 0.75 : 1 })}>
+      <Ionicons name={icon} size={18} color={colors.brand} />
     </Pressable>
   );
 }

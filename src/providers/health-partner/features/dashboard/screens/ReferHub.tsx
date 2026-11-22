@@ -1,105 +1,64 @@
 import { Ionicons } from "@expo/vector-icons";
-import { Pressable, ScrollView, Text, View } from "react-native";
+import { Text, View } from "react-native";
+
+import { colors, HP_RULES, spacing, typography } from "../../../theme";
+import { Card, ErrorBanner, IconBadge, ReferralCodeCard, Screen, ScreenHeader } from "../../../ui/components";
+import { money } from "../../../ui/format";
+import { useReferralCode } from "../useReferralCode";
 
 export default function ReferHub({ navigation }: any) {
-  const BLUE = "#1755E8";
+  const { code, error, retry } = useReferralCode();
+  const reward = money(HP_RULES.rewardPerReferral, { decimals: 0 });
+
   return (
-    <ScrollView
-      style={{ flex: 1, backgroundColor: "#F5F7FB" }}
-      contentContainerStyle={{ padding: 20 }}
-    >
-      <Pressable
-        onPress={() => navigation.goBack()}
-        style={{
-          width: 40,
-          height: 40,
-          borderRadius: 12,
-          backgroundColor: "#FFFFFF",
-          alignItems: "center",
-          justifyContent: "center",
-        }}
-      >
-        <Ionicons name="arrow-back" size={21} color="#101828" />
-      </Pressable>
-      <Text
-        style={{
-          marginTop: 22,
-          fontSize: 27,
-          fontWeight: "900",
-          color: "#101828",
-        }}
-      >
-        Refer
-      </Text>
-      <Text style={{ marginTop: 6, color: "#667085" }}>
-        Choose who you want to refer.
-      </Text>
-      <Pressable
-        onPress={() => navigation.navigate("ReferHealthPartner")}
-        style={{
-          marginTop: 24,
-          backgroundColor: "#EAF0FF",
-          borderRadius: 20,
-          padding: 20,
-          flexDirection: "row",
-          alignItems: "center",
-        }}
-      >
-        <View
-          style={{
-            width: 48,
-            height: 48,
-            borderRadius: 15,
-            backgroundColor: "#D6E3FF",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
-        >
-          <Ionicons name="people" size={24} color={BLUE} />
-        </View>
-        <View style={{ flex: 1, marginLeft: 14 }}>
-          <Text style={{ fontSize: 16, fontWeight: "800", color: "#101828" }}>
-            Refer Health Partner
-          </Text>
-          <Text style={{ marginTop: 4, color: "#667085", fontSize: 12 }}>
-            Share your partner referral code.
-          </Text>
-        </View>
-        <Ionicons name="chevron-forward" size={20} color="#98A2B3" />
-      </Pressable>
-      <Pressable
+    <Screen>
+      <ScreenHeader title="Refer & earn" subtitle={`Earn ${reward} for every successful referral.`} onBack={() => navigation.goBack()} />
+      {error ? <ErrorBanner message={error} onRetry={retry} /> : null}
+
+      <ReferralCodeCard code={code} message={`Join Uyir using my Health Partner code ${code}.`} />
+
+      <Text style={[typography.heading, { marginTop: spacing.xl, marginBottom: spacing.md }]}>Who do you want to refer?</Text>
+      <Option
+        icon="person-add"
+        tone="brand"
+        title="A citizen"
+        caption="Someone in your village who should use the Uyir app."
         onPress={() => navigation.navigate("ReferCitizen")}
-        style={{
-          marginTop: 12,
-          backgroundColor: "#EAFBF4",
-          borderRadius: 20,
-          padding: 20,
-          flexDirection: "row",
-          alignItems: "center",
-        }}
-      >
-        <View
-          style={{
-            width: 48,
-            height: 48,
-            borderRadius: 15,
-            backgroundColor: "#D2F6E6",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
-        >
-          <Ionicons name="phone-portrait" size={24} color="#039855" />
+      />
+      <Option
+        icon="people"
+        tone="blue"
+        title="A Health Partner"
+        caption="Someone who wants to work as a Health Partner like you."
+        onPress={() => navigation.navigate("ReferHealthPartner")}
+      />
+    </Screen>
+  );
+}
+
+function Option({
+  icon,
+  tone,
+  title,
+  caption,
+  onPress,
+}: {
+  icon: "person-add" | "people";
+  tone: "brand" | "blue";
+  title: string;
+  caption: string;
+  onPress: () => void;
+}) {
+  return (
+    <Card onPress={onPress} accessibilityLabel={title} style={{ marginBottom: spacing.md }}>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md }}>
+        <IconBadge icon={icon} tone={tone} size={48} />
+        <View style={{ flex: 1 }}>
+          <Text style={typography.label}>{title}</Text>
+          <Text style={[typography.caption, { marginTop: 2, lineHeight: 17 }]}>{caption}</Text>
         </View>
-        <View style={{ flex: 1, marginLeft: 14 }}>
-          <Text style={{ fontSize: 16, fontWeight: "800", color: "#101828" }}>
-            Refer Citizen App
-          </Text>
-          <Text style={{ marginTop: 4, color: "#667085", fontSize: 12 }}>
-            Share the app and your referral code.
-          </Text>
-        </View>
-        <Ionicons name="chevron-forward" size={20} color="#98A2B3" />
-      </Pressable>
-    </ScrollView>
+        <Ionicons name="chevron-forward" size={18} color={colors.muted} />
+      </View>
+    </Card>
   );
 }

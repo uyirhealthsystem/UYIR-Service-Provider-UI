@@ -1,7 +1,4 @@
-export type Coordinate = {
-  latitude: number;
-  longitude: number;
-};
+import type { Coordinate } from "../types";
 
 export type RouteStep = {
   coordinate: Coordinate;
@@ -11,6 +8,13 @@ export type RouteStep = {
   distanceMeters: number;
   durationSeconds: number;
   routeIndex: number;
+};
+
+export type RouteData = {
+  coordinates: Coordinate[];
+  steps: RouteStep[];
+  distanceKm: number;
+  durationMinutes: number;
 };
 
 function instructionForStep(step: any): string {
@@ -25,7 +29,11 @@ function instructionForStep(step: any): string {
     return road ? `Enter the roundabout${roadSuffix}` : "Enter the roundabout";
   }
   if (type === "uturn") return "Make a U-turn";
-  if (type === "merge") return modifier.includes("left") ? "Merge left" : modifier.includes("right") ? "Merge right" : "Merge ahead";
+  if (type === "merge") {
+    if (modifier.includes("left")) return "Merge left";
+    if (modifier.includes("right")) return "Merge right";
+    return "Merge ahead";
+  }
   if (type === "fork" || type === "on ramp" || type === "off ramp") {
     if (modifier.includes("left")) return `Keep left${roadSuffix}`;
     if (modifier.includes("right")) return `Keep right${roadSuffix}`;
@@ -50,7 +58,9 @@ function nearestCoordinateIndex(coordinates: Coordinate[], point: Coordinate): n
   let nearestDistance = Number.POSITIVE_INFINITY;
 
   coordinates.forEach((coordinate, index) => {
-    const distance = Math.pow(coordinate.latitude - point.latitude, 2) + Math.pow(coordinate.longitude - point.longitude, 2);
+    const distance =
+      Math.pow(coordinate.latitude - point.latitude, 2) +
+      Math.pow(coordinate.longitude - point.longitude, 2);
     if (distance < nearestDistance) {
       nearestDistance = distance;
       nearestIndex = index;
@@ -60,20 +70,20 @@ function nearestCoordinateIndex(coordinates: Coordinate[], point: Coordinate): n
   return nearestIndex;
 }
 
+function isValidCoordinate({ latitude, longitude }: Coordinate): boolean {
+  return (
+    Number.isFinite(latitude) &&
+    Number.isFinite(longitude) &&
+    Math.abs(latitude) <= 90 &&
+    Math.abs(longitude) <= 180
+  );
+}
+
 export async function getOpenSourceRoute(
   origin: Coordinate,
   destination: Coordinate,
-) {
-  if (
-    !Number.isFinite(origin.latitude) ||
-    !Number.isFinite(origin.longitude) ||
-    !Number.isFinite(destination.latitude) ||
-    !Number.isFinite(destination.longitude) ||
-    Math.abs(origin.latitude) > 90 ||
-    Math.abs(destination.latitude) > 90 ||
-    Math.abs(origin.longitude) > 180 ||
-    Math.abs(destination.longitude) > 180
-  ) {
+): Promise<RouteData | null> {
+  if (!isValidCoordinate(origin) || !isValidCoordinate(destination)) {
     return null;
   }
 
@@ -88,7 +98,6 @@ export async function getOpenSourceRoute(
     const data = await response.json().catch(() => null);
 
     if (!response.ok || data?.code !== "Ok" || !data?.routes?.[0]) {
-      console.log("AMBULANCE ROUTE ERROR:", response.status, data);
       return null;
     }
 
@@ -97,22 +106,28 @@ export async function getOpenSourceRoute(
       ([longitude, latitude]: [number, number]) => ({ latitude, longitude }),
     );
 
-    const rawSteps = route.legs?.[0]?.steps || [];
-    const steps: RouteStep[] = rawSteps.map((step: any) => {
-      const [longitude, latitude] = step?.maneuver?.location || [NaN, NaN];
-      const coordinate = { latitude: Number(latitude), longitude: Number(longitude) };
-      return {
-        coordinate,
-        instruction: instructionForStep(step),
-        modifier: String(step?.maneuver?.modifier || "straight"),
-        maneuverType: String(step?.maneuver?.type || "continue"),
-        distanceMeters: Number(step?.distance || 0),
-        durationSeconds: Number(step?.duration || 0),
-        routeIndex: coordinates.length && Number.isFinite(coordinate.latitude) && Number.isFinite(coordinate.longitude)
-          ? nearestCoordinateIndex(coordinates, coordinate)
-          : 0,
-      };
-    }).filter((step: RouteStep) => Number.isFinite(step.coordinate.latitude) && Number.isFinite(step.coordinate.longitude));
+    const rawSteps: any[] = route.legs?.[0]?.steps || [];
+    const steps = rawSteps
+      .map((step): RouteStep => {
+        const [longitude, latitude] = step?.maneuver?.location || [NaN, NaN];
+        const coordinate = {
+          latitude: Number(latitude),
+          longitude: Number(longitude),
+        };
+        return {
+          coordinate,
+          instruction: instructionForStep(step),
+          modifier: String(step?.maneuver?.modifier || "straight"),
+          maneuverType: String(step?.maneuver?.type || "continue"),
+          distanceMeters: Number(step?.distance || 0),
+          durationSeconds: Number(step?.duration || 0),
+          routeIndex:
+            coordinates.length && isValidCoordinate(coordinate)
+              ? nearestCoordinateIndex(coordinates, coordinate)
+              : 0,
+        };
+      })
+      .filter((step) => isValidCoordinate(step.coordinate));
 
     return {
       coordinates,
@@ -120,8 +135,7 @@ export async function getOpenSourceRoute(
       distanceKm: Number(route.distance || 0) / 1000,
       durationMinutes: Math.ceil(Number(route.duration || 0) / 60),
     };
-  } catch (error) {
-    console.log("AMBULANCE ROUTE REQUEST ERROR:", error);
+  } catch {
     return null;
   }
 }

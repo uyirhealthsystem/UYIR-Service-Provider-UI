@@ -1,37 +1,137 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useState } from "react";
-import { Alert, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { Pressable, Share, Text, View } from "react-native";
+
+import { colors, HP_RULES, spacing, typography } from "../../../theme";
+import { Banner, Button, Card, Field, Screen, ScreenHeader, SelectField, OptionSheet } from "../../../ui/components";
+import { money } from "../../../ui/format";
+
+// Payment help. The HP service has no support / ticket API, so instead of a
+// form that pretends to submit, this answers the common questions and lets
+// the HP send a ready-written message to their coordinator through the share
+// sheet (WhatsApp, SMS, email...).
+
+const reward = money(HP_RULES.rewardPerReferral, { decimals: 0 });
+
+const FAQ = [
+  {
+    q: "My citizen referral is still Pending",
+    a: `Citizen rewards are paid only after the person links their ABHA in the Uyir app. Help them link it and the ${reward} reward is credited automatically.`,
+  },
+  {
+    q: "I referred a Health Partner but got nothing",
+    a: "The new partner must type your code while creating their Health Partner profile. A code can't be added after the profile is created.",
+  },
+  {
+    q: "My withdrawal says Requested",
+    a: "Withdrawals are reviewed and sent to your bank account. Check that your bank account and IFSC are correct under Bank account.",
+  },
+  {
+    q: "A referral says Cancelled",
+    a: "The person deleted their Uyir account before linking their ABHA, so no reward is paid.",
+  },
+];
+
+const ISSUE_TYPES = [
+  { id: "Reward not received", name: "Reward not received" },
+  { id: "Wrong amount", name: "Wrong amount" },
+  { id: "Withdrawal problem", name: "Withdrawal problem" },
+  { id: "Other", name: "Other" },
+];
 
 export default function PaymentIssue({ navigation }: any) {
-  const [issueType, setIssueType] = useState("Payment not received");
+  const [open, setOpen] = useState<number | null>(0);
+  const [issueType, setIssueType] = useState("");
+  const [picker, setPicker] = useState(false);
   const [description, setDescription] = useState("");
-  const [selected, setSelected] = useState(false);
+  const [error, setError] = useState("");
 
-  const submit = () => {
-    if (!description.trim()) {
-      Alert.alert("Add details", "Please describe the payment issue.");
+  const send = async () => {
+    if (!issueType) {
+      setError("Choose what the problem is about.");
       return;
     }
-    Alert.alert("Issue captured", "The payment issue form is ready. A payment-issue API is not present in the current Postman collection, so no fake submission was sent.");
+    if (description.trim().length < 10) {
+      setError("Add a few words describing the problem.");
+      return;
+    }
+    setError("");
+    try {
+      await Share.share({
+        message: `Uyir Health Partner - payment issue\nType: ${issueType}\n\n${description.trim()}`,
+      });
+    } catch (e) {
+      console.log("HP payment issue share error:", e);
+    }
   };
 
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: "#F5F7FB" }} contentContainerStyle={{ padding: 20, paddingBottom: 40 }}>
-      <Pressable onPress={() => navigation.goBack()} style={{ width: 40, height: 40, borderRadius: 12, backgroundColor: "#FFFFFF", alignItems: "center", justifyContent: "center" }}><Ionicons name="arrow-back" size={21} color="#101828" /></Pressable>
-      <Text style={{ marginTop: 22, color: "#101828", fontSize: 26, fontWeight: "900" }}>Report Payment Issue</Text>
-      <Text style={{ marginTop: 5, color: "#667085", fontSize: 13, lineHeight: 20 }}>Tell us what went wrong with a reward or payment.</Text>
+    <Screen>
+      <ScreenHeader title="Payment help" subtitle="Answers to common questions about rewards and withdrawals." onBack={() => navigation.goBack()} />
 
-      <View style={{ marginTop: 22, backgroundColor: "#FFFFFF", borderRadius: 19, padding: 18 }}>
-        <Text style={{ color: "#344054", fontSize: 12, fontWeight: "700" }}>Issue type</Text>
-        <Pressable onPress={() => setSelected(!selected)} style={{ marginTop: 8, minHeight: 50, borderWidth: 1, borderColor: "#E4E7EC", borderRadius: 13, paddingHorizontal: 14, justifyContent: "center", flexDirection: "row", alignItems: "center" }}><Text style={{ flex: 1, color: "#101828", fontSize: 13 }}>{issueType}</Text><Ionicons name={selected ? "chevron-up" : "chevron-down"} size={18} color="#667085" /></Pressable>
-        {selected ? <View style={{ marginTop: 7, borderWidth: 1, borderColor: "#E4E7EC", borderRadius: 12, overflow: "hidden" }}>{["Payment not received", "Wrong amount", "Withdrawal issue", "Other"].map((type) => <Pressable key={type} onPress={() => { setIssueType(type); setSelected(false); }} style={{ padding: 13, borderBottomWidth: 1, borderBottomColor: "#F2F4F7" }}><Text style={{ color: "#344054", fontSize: 13 }}>{type}</Text></Pressable>)}</View> : null}
+      <Card padded={false}>
+        {FAQ.map((item, index) => {
+          const expanded = open === index;
+          return (
+            <View key={item.q} style={{ borderBottomWidth: index === FAQ.length - 1 ? 0 : 1, borderBottomColor: colors.divider }}>
+              <Pressable
+                onPress={() => setOpen(expanded ? null : index)}
+                accessibilityRole="button"
+                accessibilityState={{ expanded }}
+                style={{ flexDirection: "row", alignItems: "center", gap: spacing.md, padding: spacing.lg }}
+              >
+                <Text style={[typography.label, { flex: 1 }]}>{item.q}</Text>
+                <Ionicons name={expanded ? "chevron-up" : "chevron-down"} size={18} color={colors.muted} />
+              </Pressable>
+              {expanded ? <Text style={[typography.body, { paddingHorizontal: spacing.lg, paddingBottom: spacing.lg, marginTop: -spacing.xs }]}>{item.a}</Text> : null}
+            </View>
+          );
+        })}
+      </Card>
 
-        <Text style={{ marginTop: 18, color: "#344054", fontSize: 12, fontWeight: "700" }}>Description</Text>
-        <TextInput value={description} onChangeText={setDescription} placeholder="Please describe the issue..." placeholderTextColor="#98A2B3" multiline textAlignVertical="top" maxLength={300} style={{ marginTop: 8, minHeight: 130, borderWidth: 1, borderColor: "#E4E7EC", borderRadius: 13, padding: 14, color: "#101828", fontSize: 13 }} />
-        <Text style={{ marginTop: 5, color: "#98A2B3", textAlign: "right", fontSize: 10 }}>{description.length}/300</Text>
+      <Text style={[typography.heading, { marginTop: spacing.xl }]}>Still need help?</Text>
+      <Text style={[typography.body, { marginTop: 4, marginBottom: spacing.md }]}>
+        Describe the problem and send it to your coordinator. We'll open your share options (WhatsApp, SMS or email).
+      </Text>
 
-        <Pressable onPress={submit} style={{ marginTop: 18, minHeight: 52, borderRadius: 13, backgroundColor: "#1755E8", alignItems: "center", justifyContent: "center" }}><Text style={{ color: "#FFFFFF", fontWeight: "800" }}>Submit Issue</Text></Pressable>
-      </View>
-    </ScrollView>
+      <Card>
+        <SelectField
+          label="What is it about?"
+          required
+          icon="pricetag-outline"
+          value={issueType}
+          placeholder="Choose an issue type"
+          onPress={() => setPicker(true)}
+        />
+        <Field
+          label="Describe the problem"
+          required
+          value={description}
+          onChangeText={(t) => {
+            setDescription(t);
+            setError("");
+          }}
+          placeholder="e.g. My referral on 12 Nov shows completed but the reward isn't in my wallet."
+          multiline
+          maxLength={500}
+          hint={`${description.length}/500`}
+        />
+        {error ? <Banner message={error} style={{ marginBottom: spacing.lg }} /> : null}
+        <Button label="Send to coordinator" icon="paper-plane-outline" onPress={send} />
+      </Card>
+
+      <OptionSheet
+        visible={picker}
+        title="What is it about?"
+        options={ISSUE_TYPES}
+        selectedId={issueType}
+        onSelect={(id) => {
+          setIssueType(id);
+          setError("");
+          setPicker(false);
+        }}
+        onClose={() => setPicker(false)}
+      />
+    </Screen>
   );
 }
