@@ -64,7 +64,7 @@ export default function BankDetails({ navigation }: any) {
       <ScreenHeader title="Bank account" subtitle="Withdrawals from your wallet are sent here." onBack={() => navigation.goBack()} />
 
       <Banner
-        tone="blue"
+        tone="brand"
         icon="lock-closed-outline"
         message="For your security, saved details are not shown again. Saving replaces your previous account."
         style={{ marginBottom: spacing.lg }}

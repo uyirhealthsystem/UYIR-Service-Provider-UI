@@ -114,7 +114,8 @@ export function pickupAddress(place: Place | null | undefined): string {
 }
 
 export function dropAddress(place: Place | null | undefined): string {
-  return place?.address || "Hospital destination";
+  if (!place) return "No hospital chosen";
+  return place.address || "Hospital destination";
 }
 
 export function emergencyLabel(type: EmergencyType | null | undefined): string | null {

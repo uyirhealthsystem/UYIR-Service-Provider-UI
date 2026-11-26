@@ -155,7 +155,7 @@ export default function Payments({ navigation }: any) {
               <TxRow
                 key={item.id || index}
                 icon="arrow-up-circle-outline"
-                tone="blue"
+                tone="brand"
                 title="Withdrawal to bank"
                 time={formatDateTime(item.createdAt)}
                 amount={`-${money(item.amount)}`}
@@ -210,7 +210,7 @@ function TxRow({
   last,
 }: {
   icon: "gift-outline" | "arrow-up-circle-outline";
-  tone: "green" | "blue";
+  tone: "green" | "brand";
   title: string;
   time: string;
   amount: string;
@@ -329,6 +329,7 @@ function WithdrawSheet({
 
           <Field
             label="Amount"
+            required
             icon="cash-outline"
             value={amount}
             onChangeText={(text) => {

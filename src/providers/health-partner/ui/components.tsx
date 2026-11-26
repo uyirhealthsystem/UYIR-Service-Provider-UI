@@ -1,5 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
-import type { ComponentProps, ReactNode } from "react";
+import { useState, type ComponentProps, type ReactNode } from "react";
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -22,11 +22,10 @@ import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
 import { colors, radius, shadow, spacing, typography } from "../theme";
 
 export type IconName = ComponentProps<typeof Ionicons>["name"];
-export type Tone = "brand" | "blue" | "green" | "amber" | "red" | "violet" | "neutral";
+export type Tone = "brand" | "green" | "amber" | "red" | "violet" | "neutral";
 
 const TONES: Record<Tone, { fg: string; bg: string }> = {
   brand: { fg: colors.brand, bg: colors.brandSoft },
-  blue: { fg: colors.blue, bg: colors.blueSoft },
   green: { fg: colors.green, bg: colors.greenSoft },
   amber: { fg: colors.amber, bg: colors.amberSoft },
   red: { fg: colors.red, bg: colors.redSoft },
@@ -48,6 +47,7 @@ export function Screen({
   refreshing = false,
   footer,
   contentStyle,
+  hero,
 }: {
   children: ReactNode;
   onRefresh?: () => void;
@@ -55,22 +55,38 @@ export function Screen({
   /** Pinned below the scroll area (primary form action). */
   footer?: ReactNode;
   contentStyle?: StyleProp<ViewStyle>;
+  /** Full-width brand header above the content (PRO dashboard style). */
+  hero?: ReactNode;
 }) {
   const insets = useSafeAreaInsets();
   return (
-    <SafeAreaView edges={["top"]} style={{ flex: 1, backgroundColor: colors.background }}>
+    <SafeAreaView edges={["top"]} style={{ flex: 1, backgroundColor: hero ? colors.brand : colors.background }}>
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
         <ScrollView
+          style={{ backgroundColor: colors.background }}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
-          contentContainerStyle={[{ padding: spacing.xl, paddingBottom: spacing.xxl * 2 }, contentStyle]}
+          contentContainerStyle={hero ? { paddingBottom: spacing.xxl * 2 } : [{ padding: spacing.xl, paddingBottom: spacing.xxl * 2 }, contentStyle]}
           refreshControl={
             onRefresh ? (
-              <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.brand} colors={[colors.brand]} />
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={onRefresh}
+                tintColor={hero ? colors.white : colors.brand}
+                colors={[colors.brand]}
+                progressBackgroundColor={colors.white}
+              />
             ) : undefined
           }
         >
-          {children}
+          {hero ? (
+            <>
+              {hero}
+              <View style={[{ paddingHorizontal: spacing.lg, marginTop: -56 }, contentStyle]}>{children}</View>
+            </>
+          ) : (
+            children
+          )}
         </ScrollView>
         {footer ? (
           <View
@@ -343,7 +359,7 @@ export function Button({
       accessibilityState={{ disabled: !!inactive, busy: !!loading }}
       style={({ pressed }) => [
         {
-          minHeight: compact ? 40 : 52,
+          minHeight: compact ? 40 : 50,
           paddingHorizontal: compact ? spacing.md : spacing.lg,
           borderRadius: radius.md,
           backgroundColor: palette.bg,
@@ -690,41 +706,67 @@ export function Field({
   hint?: string;
   icon?: IconName;
 }) {
+  const [focused, setFocused] = useState(false);
+  const accent = error ? colors.red : focused ? colors.brand : undefined;
   return (
     <View style={{ marginBottom: spacing.lg }}>
-      <Text style={{ marginBottom: 6, fontSize: 13, fontWeight: "700", color: colors.textSecondary }}>
-        {label}
-        {required ? <Text style={{ color: colors.red }}> *</Text> : null}
-      </Text>
+      <FieldLabel label={label} required={required} hint={hint} />
       <View
         style={{
           flexDirection: "row",
           alignItems: input.multiline ? "flex-start" : "center",
-          minHeight: 50,
-          borderWidth: 1,
-          borderColor: error ? colors.red : colors.border,
+          minHeight: input.multiline ? 100 : 52,
+          borderWidth: accent ? 1.5 : 1,
+          borderColor: accent ?? colors.border,
           borderRadius: radius.md,
           backgroundColor: input.editable === false ? colors.surfaceMuted : colors.surface,
-          paddingHorizontal: 14,
+          paddingHorizontal: spacing.md,
+          gap: spacing.sm,
         }}
       >
-        {icon ? <Ionicons name={icon} size={18} color={colors.muted} style={{ marginRight: 10, marginTop: input.multiline ? 14 : 0 }} /> : null}
+        {icon ? <Ionicons name={icon} size={18} color={accent ?? colors.muted} style={input.multiline ? { marginTop: 14 } : undefined} /> : null}
         <TextInput
           placeholderTextColor={colors.muted}
+          selectionColor={colors.brand}
           accessibilityLabel={label}
           {...input}
+          onFocus={(e) => { setFocused(true); input.onFocus?.(e); }}
+          onBlur={(e) => { setFocused(false); input.onBlur?.(e); }}
           style={[
             { flex: 1, fontSize: 15, color: colors.text, paddingVertical: 12 },
-            input.multiline && { minHeight: 110, textAlignVertical: "top" },
+            input.multiline && { minHeight: 100, textAlignVertical: "top" },
             style,
           ]}
         />
       </View>
-      {error ? (
-        <Text style={{ marginTop: 5, color: colors.red, fontSize: 12 }}>{error}</Text>
-      ) : hint ? (
-        <Text style={{ marginTop: 5, color: colors.muted, fontSize: 12 }}>{hint}</Text>
-      ) : null}
+      <FieldError error={error} />
+    </View>
+  );
+}
+
+/** Label row shared by Field and SelectField; matches PRO's form fields. */
+function FieldLabel({ label, required, hint }: { label: string; required?: boolean; hint?: string }) {
+  return (
+    <>
+      <Text style={[typography.label, { marginBottom: hint ? 2 : spacing.sm }]}>
+        {label}
+        {required ? (
+          <Text style={{ color: colors.red }}> *</Text>
+        ) : (
+          <Text style={{ color: colors.muted, fontWeight: "500" }}> (optional)</Text>
+        )}
+      </Text>
+      {hint ? <Text style={[typography.caption, { marginBottom: spacing.sm }]}>{hint}</Text> : null}
+    </>
+  );
+}
+
+function FieldError({ error }: { error?: string }) {
+  if (!error) return null;
+  return (
+    <View style={{ flexDirection: "row", alignItems: "center", gap: 4, marginTop: 6 }}>
+      <Ionicons name="alert-circle" size={14} color={colors.red} />
+      <Text style={{ flex: 1, color: colors.red, fontSize: 12, fontWeight: "600" }}>{error}</Text>
     </View>
   );
 }
@@ -755,38 +797,35 @@ export function SelectField({
 }) {
   return (
     <View style={{ marginBottom: spacing.lg }}>
-      <Text style={{ marginBottom: 6, fontSize: 13, fontWeight: "700", color: colors.textSecondary }}>
-        {label}
-        {required ? <Text style={{ color: colors.red }}> *</Text> : null}
-      </Text>
+      <FieldLabel label={label} required={required} hint={hint} />
       <Pressable
         onPress={onPress}
         disabled={disabled || loading}
         accessibilityRole="button"
         accessibilityLabel={`${label}: ${value || placeholder}`}
         accessibilityState={{ disabled: !!(disabled || loading) }}
-        style={{
+        style={({ pressed }) => ({
           flexDirection: "row",
           alignItems: "center",
-          minHeight: 50,
-          borderWidth: 1,
+          gap: spacing.sm,
+          minHeight: 52,
+          borderWidth: error ? 1.5 : 1,
           borderColor: error ? colors.red : colors.border,
           borderRadius: radius.md,
-          backgroundColor: disabled ? colors.surfaceMuted : colors.surface,
-          paddingHorizontal: 14,
-        }}
+          backgroundColor: disabled ? colors.surfaceMuted : pressed ? colors.surfaceMuted : colors.surface,
+          paddingHorizontal: spacing.md,
+        })}
       >
-        {icon ? <Ionicons name={icon} size={18} color={colors.muted} style={{ marginRight: 10 }} /> : null}
-        <Text style={{ flex: 1, fontSize: 15, color: value ? colors.text : colors.muted }} numberOfLines={1}>
+        {icon ? <Ionicons name={icon} size={18} color={value ? colors.brand : colors.muted} /> : null}
+        <Text
+          style={{ flex: 1, fontSize: 15, color: value ? colors.text : colors.muted, fontWeight: value ? "600" : "400" }}
+          numberOfLines={1}
+        >
           {loading ? "Loading..." : value || placeholder}
         </Text>
         {loading ? <ActivityIndicator size="small" color={colors.brand} /> : <Ionicons name="chevron-down" size={18} color={colors.muted} />}
       </Pressable>
-      {error ? (
-        <Text style={{ marginTop: 5, color: colors.red, fontSize: 12 }}>{error}</Text>
-      ) : hint ? (
-        <Text style={{ marginTop: 5, color: colors.muted, fontSize: 12 }}>{hint}</Text>
-      ) : null}
+      <FieldError error={error} />
     </View>
   );
 }

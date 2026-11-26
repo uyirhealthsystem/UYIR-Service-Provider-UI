@@ -1,6 +1,23 @@
-import { BASE_URL } from "../config/env";
+import { authFetch, getAccessToken } from "../../../auth/session";
+import { API_PREFIX, BASE_URL } from "../config/env";
 
 let proUserId = "";
+
+/** Full URL for a PRO route, e.g. proUrl("/pro/abha/otp"). Works direct or via the gateway (see API_PREFIX). */
+export function proUrl(path: string) {
+  return `${BASE_URL}${API_PREFIX}${path.startsWith("/") ? path : `/${path}`}`;
+}
+
+/**
+ * The gateway requires the access token on every PRO call (and replaces
+ * x-user-id with the token's user). The PRO service itself ignores it, so
+ * direct calls keep working. With the header present, authFetch also
+ * refreshes an expired token and retries once.
+ */
+export function proAuthHeader(): Record<string, string> {
+  const token = getAccessToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
 
 export function setProUserId(userId: string | null | undefined) {
   proUserId = userId || "";
@@ -11,10 +28,11 @@ export function getProUserId() {
 }
 
 export async function proApi(path: string, options: RequestInit = {}) {
-  const response = await fetch(`${BASE_URL}/api/v1${path}`, {
+  const response = await authFetch(proUrl(path), {
     ...options,
     headers: {
       "Content-Type": "application/json",
+      ...proAuthHeader(),
       ...(proUserId ? { "x-user-id": proUserId } : {}),
       ...(options.headers || {}),
     },

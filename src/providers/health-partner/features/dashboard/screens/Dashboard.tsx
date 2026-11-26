@@ -5,19 +5,19 @@ import { Pressable, Text, View } from "react-native";
 
 import { getDashboard } from "../../../api/healthPartner";
 import { getReferrals } from "../../../api/referrals";
-import { colors, HP_RULES, spacing, typography } from "../../../theme";
+import { colors, HP_RULES, radius, shadow, spacing, typography } from "../../../theme";
 import {
   Avatar,
   Banner,
   Card,
   ErrorBanner,
+  HeaderIconButton,
   IconBadge,
   LoadingView,
   Pill,
   ReferralCodeCard,
   Screen,
   SectionHeader,
-  StatTile,
   type IconName,
   type Tone,
 } from "../../../ui/components";
@@ -76,31 +76,60 @@ export default function Dashboard({ navigation }: any) {
   if (loading && !loaded.current) return <LoadingView label="Loading your dashboard..." />;
 
   const name = String(dashboard?.fullName || "Health Partner");
-  const firstName = name.split(" ")[0];
   const code = dashboard?.referralCode;
   const completed = Number(dashboard?.totalReferrals ?? 0);
   const pending = Number(dashboard?.pendingReferrals ?? 0);
   const inactive = String(dashboard?.status || "").toUpperCase() === "INACTIVE";
 
-  return (
-    <Screen onRefresh={() => load(true)} refreshing={refreshing}>
-      {/* Header */}
-      <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md }}>
-        <View style={{ flex: 1 }}>
-          <Text style={typography.caption}>{greeting()},</Text>
-          <Text style={[typography.display, { marginTop: 2 }]} numberOfLines={1}>
-            {firstName}
+  // Same hero as the PRO dashboard: brand header, avatar, greeting, then a
+  // floating white card overlapping its bottom edge.
+  const hero = (
+    <View
+      style={{
+        backgroundColor: colors.brand,
+        paddingHorizontal: spacing.xl,
+        paddingTop: spacing.sm,
+        paddingBottom: 72,
+        borderBottomLeftRadius: 28,
+        borderBottomRightRadius: 28,
+      }}
+    >
+      <View style={{ flexDirection: "row", alignItems: "center" }}>
+        <Avatar label={initials(name)} size={46} onDark />
+        <View style={{ flex: 1, marginLeft: spacing.md }}>
+          <Text style={{ color: colors.brandOnDark, fontSize: 13, fontWeight: "600" }}>{greeting()},</Text>
+          <Text style={{ color: colors.white, fontSize: 20, fontWeight: "800" }} numberOfLines={1}>
+            {name}
           </Text>
         </View>
-        <Pressable onPress={() => navigation.navigate("Profile")} accessibilityRole="button" accessibilityLabel="Open profile">
-          <Avatar label={initials(name)} size={46} />
-        </Pressable>
+        <HeaderIconButton icon="person-outline" label="Open profile" onDark onPress={() => navigation.navigate("Profile")} />
       </View>
-      <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, marginTop: spacing.sm, marginBottom: spacing.lg }}>
-        <Pill label="Health Partner" tone="brand" icon="shield-checkmark" />
-        {inactive ? <Pill label="Inactive" tone="neutral" /> : null}
+      <View style={{ flexDirection: "row", alignItems: "center", marginTop: spacing.md, gap: 4 }}>
+        <Ionicons name="shield-checkmark" size={14} color={colors.brandOnDark} />
+        <Text style={{ color: colors.brandOnDark, fontSize: 13, fontWeight: "600" }}>
+          Health Partner{inactive ? " · Inactive" : ""}
+        </Text>
+      </View>
+    </View>
+  );
+
+  return (
+    <Screen onRefresh={() => load(true)} refreshing={refreshing} hero={hero}>
+      {/* Progress: floating card over the hero, like PRO's "Today's target" */}
+      <View style={{ backgroundColor: colors.surface, borderRadius: radius.xl, padding: spacing.xl, ...shadow.floating }}>
+        <Text style={typography.overline}>YOUR PROGRESS</Text>
+        <View style={{ flexDirection: "row", marginTop: spacing.md }}>
+          <ProgressFigure label="Successful referrals" value={String(completed)} onPress={() => navigation.navigate("Referrals")} />
+          <ProgressFigure label="Awaiting ABHA link" value={String(pending)} tone="amber" onPress={() => navigation.navigate("Referrals")} />
+        </View>
+        <View style={{ height: 1, backgroundColor: colors.divider, marginVertical: spacing.lg }} />
+        <View style={{ flexDirection: "row" }}>
+          <ProgressFigure label="Total earned" value={money(dashboard?.totalEarnings)} small />
+          <ProgressFigure label="Wallet balance" value={money(dashboard?.walletBalance)} small onPress={() => navigation.navigate("Payments")} action="Withdraw" />
+        </View>
       </View>
 
+      <View style={{ height: spacing.lg }} />
       {error ? <ErrorBanner message={error} onRetry={() => load(true)} /> : null}
       {inactive ? (
         <Banner
@@ -127,40 +156,10 @@ export default function Dashboard({ navigation }: any) {
         />
         <ActionCard
           icon="people"
-          tone="blue"
+          tone="violet"
           title="Refer a partner"
           caption="Grow the HP network"
           onPress={() => navigation.navigate("ReferHealthPartner")}
-        />
-      </View>
-
-      {/* Stats */}
-      <SectionHeader title="Your progress" caption="Updated when you open this screen" />
-      <View style={{ flexDirection: "row", gap: spacing.md }}>
-        <StatTile
-          icon="checkmark-done"
-          tone="green"
-          label="Successful referrals"
-          value={completed}
-          onPress={() => navigation.navigate("Referrals")}
-        />
-        <StatTile
-          icon="hourglass-outline"
-          tone="amber"
-          label="Awaiting ABHA link"
-          value={pending}
-          onPress={() => navigation.navigate("Referrals")}
-        />
-      </View>
-      <View style={{ flexDirection: "row", gap: spacing.md, marginTop: spacing.md }}>
-        <StatTile icon="trending-up" tone="violet" label="Total earned" value={money(dashboard?.totalEarnings)} />
-        <StatTile
-          icon="wallet"
-          tone="brand"
-          label="Wallet balance"
-          value={money(dashboard?.walletBalance)}
-          hint="Withdraw"
-          onPress={() => navigation.navigate("Payments")}
         />
       </View>
 
@@ -231,6 +230,48 @@ export default function Dashboard({ navigation }: any) {
         </View>
       </Card>
     </Screen>
+  );
+}
+
+/** One number in the progress card: big figure, caption, optional tap target. */
+function ProgressFigure({
+  label,
+  value,
+  tone,
+  small,
+  action,
+  onPress,
+}: {
+  label: string;
+  value: string;
+  tone?: "amber";
+  small?: boolean;
+  action?: string;
+  onPress?: () => void;
+}) {
+  const body = (
+    <>
+      <Text
+        style={{ fontSize: small ? 22 : 34, lineHeight: small ? 28 : 40, fontWeight: "800", color: tone === "amber" ? colors.amber : colors.text }}
+        numberOfLines={1}
+        adjustsFontSizeToFit
+      >
+        {value}
+      </Text>
+      <Text style={[typography.caption, { marginTop: 2 }]}>{label}</Text>
+      {action ? <Text style={{ marginTop: 4, color: colors.brand, fontSize: 12, fontWeight: "700" }}>{action} ›</Text> : null}
+    </>
+  );
+  if (!onPress) return <View style={{ flex: 1 }}>{body}</View>;
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`${label}: ${value}`}
+      style={({ pressed }) => ({ flex: 1, opacity: pressed ? 0.7 : 1 })}
+    >
+      {body}
+    </Pressable>
   );
 }
 

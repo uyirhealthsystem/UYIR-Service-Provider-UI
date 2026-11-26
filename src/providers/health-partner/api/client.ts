@@ -2,7 +2,7 @@ import { authFetch, getAccessToken,
   getAuthRole,
   getAuthUserId,
 } from "../../../auth/session";
-import { BASE_URL } from "../config/env";
+import { API_PREFIX, BASE_URL } from "../config/env";
 
 export type HealthPartnerApiError = Error & { status?: number; data?: any };
 
@@ -47,7 +47,7 @@ export async function healthPartnerApi(
 
   let response: Response;
   try {
-    response = await authFetch(`${BASE_URL}/api/v1${path}`, {
+    response = await authFetch(`${BASE_URL}${API_PREFIX}${path}`, {
       ...options,
       headers: {
         "Content-Type": "application/json",
