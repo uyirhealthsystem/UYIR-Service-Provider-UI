@@ -27,7 +27,7 @@ export default function ReferHub({ navigation }: any) {
       />
       <Option
         icon="people"
-        tone="blue"
+        tone="violet"
         title="A Health Partner"
         caption="Someone who wants to work as a Health Partner like you."
         onPress={() => navigation.navigate("ReferHealthPartner")}
@@ -44,7 +44,7 @@ function Option({
   onPress,
 }: {
   icon: "person-add" | "people";
-  tone: "brand" | "blue";
+  tone: "brand" | "violet";
   title: string;
   caption: string;
   onPress: () => void;

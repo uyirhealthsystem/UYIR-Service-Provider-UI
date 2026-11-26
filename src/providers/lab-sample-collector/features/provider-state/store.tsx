@@ -2,6 +2,7 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useS
 import { useFocusEffect } from "@react-navigation/native";
 import { CollectorBooking, CollectorStatus } from "../provider-data/data";
 import * as collectorApi from "../../api/collector";
+import * as Location from "expo-location";
 
 type CollectorStore = {
   requests: CollectorBooking[];
@@ -24,6 +25,7 @@ type CollectorStore = {
   uploadDeliveryProof: (uri: string) => Promise<void>;
   verifyHandoverOtp: (sampleId: string, otp: string) => Promise<void>;
   updatePersonalProfile: (payload: { name?: string; phone?: string; qualification?: string; qualificationNumber?: string; qualificationProofUrl?: string }) => Promise<void>;
+  setAvailability: (isAvailable: boolean) => Promise<void>;
 };
 
 const Context = createContext<CollectorStore | null>(null);
@@ -186,10 +188,23 @@ export function LabSampleCollectorProvider({ children }: { children: React.React
     setProfile((current) => current ? { ...current, ...updated } : updated);
   };
 
+  const setAvailability = async (isAvailable: boolean) => {
+    if (isAvailable) {
+      const permission = await Location.requestForegroundPermissionsAsync();
+      if (!permission.granted) throw new Error("Location permission is required.");
+      const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+      await collectorApi.updateCollectorLocation(position.coords.latitude, position.coords.longitude, true);
+    } else {
+      if (profile?.latitude == null || profile?.longitude == null) throw new Error("No location is available to preserve.");
+      await collectorApi.updateCollectorLocation(profile.latitude, profile.longitude, false);
+    }
+    await refresh();
+  };
+
   const value = useMemo(() => ({
     requests, activeBooking, history, profile, dashboard, earnings, loading, error, refresh,
     acceptBooking, rejectBooking, setStatus, verifyPatientOtp, createCollectionSamples, uploadCollectionImage,
-    markSampleCollected, markSampleInTransit, uploadDeliveryProof, verifyHandoverOtp, updatePersonalProfile,
+    markSampleCollected, markSampleInTransit, uploadDeliveryProof, verifyHandoverOtp, updatePersonalProfile, setAvailability,
   }), [requests, activeBooking, history, profile, dashboard, earnings, loading, error, refresh]);
   return <Context.Provider value={value}>{children}</Context.Provider>;
 }

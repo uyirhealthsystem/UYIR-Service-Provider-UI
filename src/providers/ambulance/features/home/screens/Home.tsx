@@ -52,6 +52,7 @@ export default function Home({ route }: ScreenProps) {
         destinationKind={headedToHospital ? "hospital" : "patient"}
         driverLocation={location}
         bottomInset={sheetHeight}
+        missingDestination={onActiveTrip && !destination}
       />
 
       <View style={styles.topBar}>

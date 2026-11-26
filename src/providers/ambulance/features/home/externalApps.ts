@@ -12,6 +12,13 @@ export function openNavigation({ latitude, longitude }: Coordinate) {
   );
 }
 
+/** Opens a map search for hospitals around the ambulance, for trips booked without one. */
+export function openNearbyHospitals() {
+  Linking.openURL("https://www.google.com/maps/search/?api=1&query=hospital").catch(() =>
+    Alert.alert("Unable to open maps", "Install Google Maps to search for a hospital."),
+  );
+}
+
 export function callPhone(phone: string) {
   Linking.openURL(`tel:${phone}`).catch(() =>
     Alert.alert("Unable to place call", `Call ${phone} from your phone app.`),

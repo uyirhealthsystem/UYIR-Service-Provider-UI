@@ -1,5 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Home from "./features/home/screens/Home";
 import Bookings from "./features/bookings/screens/Bookings";
 import Profile from "./features/profile/screens/Profile";
@@ -10,11 +11,12 @@ const Tab = createBottomTabNavigator();
 const icons: Record<string, any> = { Home: "home-outline", Bookings: "calendar-outline", Reports: "document-text-outline", Earnings: "wallet-outline", Profile: "person-outline" };
 
 export default function LabSampleCollectorLayout() {
+  const insets = useSafeAreaInsets();
   return <Tab.Navigator screenOptions={({ route }) => ({
     headerShown: false,
     tabBarActiveTintColor: "#1473E6",
     tabBarInactiveTintColor: "#7B8798",
-    tabBarStyle: { height: 68, paddingBottom: 8, paddingTop: 5, borderTopWidth: 1, borderTopColor: "#E5EBF3", backgroundColor: "#FFFFFF" },
+    tabBarStyle: { height: 68 + insets.bottom, paddingBottom: 8 + insets.bottom, paddingTop: 5, borderTopWidth: 1, borderTopColor: "#E5EBF3", backgroundColor: "#FFFFFF" },
     tabBarLabelStyle: { fontSize: 10, fontWeight: "700" },
     tabBarIcon: ({ color, size }) => <Ionicons name={icons[route.name]} size={size} color={color} />,
   })}>

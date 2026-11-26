@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Alert, Linking, Pressable, StyleSheet, Switch, Text, View } from "react-native";
-import { useFocusEffect } from "@react-navigation/native";
+import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
 import { completeEmergencyBooking, getEmergencyBookings } from "../../../api/hospital";
 import { Banner, Button, C, Card, Chip, Empty, Screen, StatusPill } from "../../../components/ui";
@@ -15,6 +15,7 @@ const TABS = [["ACTIVE", "Active"], ["HISTORY", "History"]] as const;
  */
 export default function HospitalEmergencies() {
   const { handlesEmergencies, setHandlesEmergencies, revision, emergencyQueue } = useHospitalStore();
+  const navigation = useNavigation<any>();
   const [items, setItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -93,6 +94,16 @@ export default function HospitalEmergencies() {
                 <Ionicons name="call" size={15} color={C.primary} /><Text style={styles.callText}>{e.patientPhone}</Text>
               </Pressable>
             ) : null}
+            {st === "ACCEPTED" && e.ambulanceBookingId ? (
+              <Pressable style={styles.incoming} onPress={() => navigation.navigate("HospitalIncomingAmbulance", { bookingId: String(e.id), patientName: e.patientName })}>
+                <Ionicons name="navigate" size={18} color={C.danger} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.incomingTitle}>Patient is coming by ambulance</Text>
+                  <Text style={styles.incomingSub}>Track it live: position, ETA and crew</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={18} color={C.danger} />
+              </Pressable>
+            ) : st === "ACCEPTED" ? <Text style={styles.ownWay}>No Uyir ambulance booked: the patient may come on their own.</Text> : null}
             {st === "ACCEPTED" ? <Button style={{ marginTop: 12 }} variant="success" icon="checkmark-done" title="Mark completed" loading={busy === String(e.id)} onPress={() => complete(String(e.id))} /> : null}
             {st === "REQUESTED" ? <Text style={styles.waiting}>Waiting for your response in the alert.</Text> : null}
           </Card>
@@ -115,4 +126,8 @@ const styles = StyleSheet.create({
   call: { flexDirection: "row", alignItems: "center", gap: 6, alignSelf: "flex-start", marginTop: 10, paddingVertical: 7, paddingHorizontal: 11, borderRadius: 9, backgroundColor: C.primarySoft },
   callText: { color: C.primary, fontWeight: "800", fontSize: 13 },
   waiting: { fontSize: 12.5, color: C.danger, fontWeight: "700", marginTop: 10 },
+  incoming: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 12, padding: 12, borderRadius: 12, backgroundColor: C.dangerSoft },
+  incomingTitle: { fontSize: 13.5, fontWeight: "800", color: C.danger },
+  incomingSub: { fontSize: 12, color: C.ink, marginTop: 1 },
+  ownWay: { fontSize: 12.5, color: C.muted, marginTop: 10 },
 });

@@ -1,6 +1,6 @@
 import { File } from "expo-file-system";
-import { BASE_URL, HOSPITAL_API_URL } from "../config/env";
-import { getProUserId, proApi } from "./client";
+import { HOSPITAL_API_URL } from "../config/env";
+import { getProUserId, proApi, proAuthHeader, proUrl } from "./client";
 import { authFetch, getAccessToken, getAuthUserId, getAuthRole } from "../../../auth/session";
 import { scheduleToText } from "../features/onboarding/components/ScheduleEditor";
 
@@ -27,16 +27,15 @@ export async function uploadProHospitalImages(
   console.log("proHospitalId:", proHospitalId);
   console.log("image1:", image1);
   console.log("image2:", image2);
-  console.log(
-    "URL:",
-    `${BASE_URL}/api/v1/pro/hospital/${proHospitalId}/images`,
-  );
+  const imagesUrl = proUrl(`/pro/hospital/${proHospitalId}/images`);
+  console.log("URL:", imagesUrl);
 
-  const response = await fetch(
-    `${BASE_URL}/api/v1/pro/hospital/${proHospitalId}/images`,
+  const response = await authFetch(
+    imagesUrl,
     {
       method: "PATCH",
       headers: {
+        ...proAuthHeader(),
         "x-user-id": userId,
       },
       body,

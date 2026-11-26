@@ -88,7 +88,7 @@ export const REFERRAL_STATUS: Record<ReferralStatus, { label: string; tone: Tone
 
 export function referralType(raw?: string | null) {
   return String(raw || "").toUpperCase() === "HEALTH_PARTNER"
-    ? { label: "Health Partner", icon: "people" as IconName, tone: "blue" as Tone }
+    ? { label: "Health Partner", icon: "people" as IconName, tone: "violet" as Tone }
     : { label: "Citizen", icon: "person" as IconName, tone: "brand" as Tone };
 }
 
@@ -96,7 +96,7 @@ export function withdrawalStatus(raw?: string | null): { label: string; tone: To
   const value = String(raw || "PENDING").toUpperCase();
   if (["COMPLETED", "PROCESSED", "PAID", "SUCCESS"].includes(value)) return { label: "Paid", tone: "green" };
   if (["REJECTED", "FAILED", "CANCELLED"].includes(value)) return { label: "Failed", tone: "red" };
-  if (value === "PROCESSING") return { label: "Processing", tone: "blue" };
+  if (value === "PROCESSING") return { label: "Processing", tone: "brand" };
   return { label: "Requested", tone: "amber" };
 }
 

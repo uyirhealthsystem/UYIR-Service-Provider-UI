@@ -17,6 +17,8 @@ import { IconButton } from "../../../ui/components";
 
 // Location updates arrive every few seconds; the route only needs refreshing after real movement.
 const ROUTE_REFRESH_METERS = 75;
+// Closer than this, there is no route to draw: the ambulance is already there.
+const ARRIVED_METERS = 60;
 const DEFAULT_CENTER = { latitude: 13.0827, longitude: 80.2707 };
 const IGNORED_MANEUVERS = ["depart", "arrive"];
 // Keeps the route clear of the top bar and the turn banner.
@@ -27,6 +29,8 @@ type Props = {
   destinationKind: "patient" | "hospital";
   driverLocation: Coordinate | null;
   bottomInset: number;
+  /** On a trip, but the booking has no location for the next stop (e.g. no hospital chosen). */
+  missingDestination?: boolean;
 };
 
 function turnIcon(modifier: string, maneuverType: string): keyof typeof Ionicons.glyphMap {
@@ -43,6 +47,7 @@ export default function MapCard({
   destinationKind,
   driverLocation,
   bottomInset,
+  missingDestination = false,
 }: Props) {
   const [routeData, setRouteData] = useState<RouteData | null>(null);
   const [loadingRoute, setLoadingRoute] = useState(false);
@@ -176,6 +181,19 @@ export default function MapCard({
 
   const isHospital = destinationKind === "hospital";
   const destinationName = isHospital ? "Hospital drop-off" : "Patient pickup";
+  const atDestination =
+    !!destination && !!driverLocation && distanceMeters(driverLocation, destination) < ARRIVED_METERS;
+
+  let bannerTitle: string;
+  if (atDestination) {
+    bannerTitle = isHospital ? "You're at the hospital" : "You're at the patient pickup";
+  } else if (nextStep) {
+    bannerTitle = nextStep.instruction;
+  } else if (routeData || loadingRoute) {
+    bannerTitle = `Continue to ${destinationName.toLowerCase()}`;
+  } else {
+    bannerTitle = "Route unavailable. Tap Navigate for directions.";
+  }
 
   function recenter() {
     setFollowing(true);
@@ -254,12 +272,16 @@ export default function MapCard({
       {destination && driverLocation ? (
         <View style={styles.banner}>
           <View style={styles.bannerIcon}>
-            {loadingRoute && !routeData ? (
+            {loadingRoute && !routeData && !atDestination ? (
               <ActivityIndicator size="small" color={colors.white} />
             ) : (
               <Ionicons
                 name={
-                  nextStep ? turnIcon(nextStep.modifier, nextStep.maneuverType) : "navigate"
+                  atDestination
+                    ? "flag"
+                    : nextStep
+                      ? turnIcon(nextStep.modifier, nextStep.maneuverType)
+                      : "navigate"
                 }
                 size={22}
                 color={colors.white}
@@ -268,17 +290,32 @@ export default function MapCard({
           </View>
           <View style={styles.bannerText}>
             <Text style={styles.bannerTitle} numberOfLines={2}>
-              {nextStep?.instruction ??
-                (routeData || loadingRoute
-                  ? `Continue to ${destinationName.toLowerCase()}`
-                  : "Route unavailable. Tap Navigate for directions.")}
+              {bannerTitle}
             </Text>
-            {routeData ? (
+            {routeData && !atDestination ? (
               <Text style={styles.bannerMeta}>
                 {distanceToTurn !== null ? `In ${formatDistance(distanceToTurn)} · ` : ""}
                 {routeData.durationMinutes} min · {routeData.distanceKm.toFixed(1)} km
               </Text>
             ) : null}
+          </View>
+        </View>
+      ) : null}
+
+      {missingDestination && !destination ? (
+        <View style={[styles.banner, styles.bannerWarning]}>
+          <View style={styles.bannerIcon}>
+            <Ionicons name="alert-circle" size={22} color={colors.white} />
+          </View>
+          <View style={styles.bannerText}>
+            <Text style={styles.bannerTitle} numberOfLines={2}>
+              {isHospital ? "No hospital set for this trip" : "No pickup location for this trip"}
+            </Text>
+            <Text style={styles.bannerMeta}>
+              {isHospital
+                ? "Ask the patient where to go, or find a nearby hospital."
+                : "Call the patient for their location."}
+            </Text>
           </View>
         </View>
       ) : null}
@@ -347,6 +384,7 @@ const styles = StyleSheet.create({
     gap: spacing.md,
     ...shadow.floating,
   },
+  bannerWarning: { backgroundColor: colors.red },
   bannerIcon: {
     width: 40,
     height: 40,

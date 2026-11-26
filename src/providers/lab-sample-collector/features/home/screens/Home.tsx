@@ -1,14 +1,29 @@
 import { Ionicons } from "@expo/vector-icons";
-import { Alert, Pressable, ScrollView, Text, View } from "react-native";
+import { useState } from "react";
+import { ActivityIndicator, Alert, Pressable, ScrollView, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import BookingCard from "../../bookings/components/BookingCard";
 const BG = "#F5F8FC", BLUE = "#1473E6", GREEN = "#159447", MUTED = "#758096", TEXT = "#172033";
 import { useLabSampleCollector } from "../../provider-state/store";
 
 export default function Home({ navigation }: any) {
-  const { requests, activeBooking, profile, dashboard, loading, refresh } = useLabSampleCollector();
+  const { requests, activeBooking, profile, dashboard, loading, refresh, setAvailability } = useLabSampleCollector();
+  const [updating, setUpdating] = useState(false);
   const current = activeBooking;
   const open = requests.length;
+  const online = Boolean(profile?.isAvailable);
+  const canToggle = profile?.qualificationStatus === "VERIFIED" && profile?.status === "ACTIVE";
+
+  const toggleAvailability = async () => {
+    try {
+      setUpdating(true);
+      await setAvailability(!online);
+    } catch (error: any) {
+      Alert.alert("Availability update failed", error?.message || "Please try again.");
+    } finally {
+      setUpdating(false);
+    }
+  };
 
   return <SafeAreaView style={{ flex: 1, backgroundColor: BG }} edges={["top"]}>
     <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 35 }}>
@@ -18,9 +33,11 @@ export default function Home({ navigation }: any) {
       </View>
 
       <View style={{ marginTop: 16, backgroundColor: "#fff", borderRadius: 16, padding: 14, flexDirection: "row", alignItems: "center", borderWidth: 1, borderColor: "#E8ECF3" }}>
-        <View style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: "#E6F8EE", alignItems: "center", justifyContent: "center" }}><View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: GREEN }} /></View>
-        <View style={{ flex: 1, marginLeft: 10 }}><Text style={{ color: TEXT, fontSize: 12, fontWeight: "900" }}>{profile?.isAvailable ? "You are available" : "You are offline"}</Text><Text style={{ color: MUTED, fontSize: 10, marginTop: 3 }}>{current ? "Finish the current job to receive another" : profile?.isAvailable ? "You will receive eligible collection requests" : "Update location and availability from Profile"}</Text></View>
-        <View style={{ width: 45, height: 25, borderRadius: 14, backgroundColor: BLUE, padding: 3, justifyContent: "center" }}><View style={{ width: 19, height: 19, borderRadius: 10, backgroundColor: "#fff", alignSelf: "flex-end" }} /></View>
+        <View style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: online ? "#E6F8EE" : "#EEF1F5", alignItems: "center", justifyContent: "center" }}><View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: online ? GREEN : MUTED }} /></View>
+        <View style={{ flex: 1, marginLeft: 10 }}><Text style={{ color: TEXT, fontSize: 12, fontWeight: "900" }}>{online ? "You are available" : "You are offline"}</Text><Text style={{ color: MUTED, fontSize: 10, marginTop: 3 }}>{!canToggle ? "Your account must be verified and active to go online" : current ? "Finish the current job to receive another" : online ? "You will receive eligible collection requests" : "Turn on to receive collection requests"}</Text></View>
+        <Pressable accessibilityRole="switch" accessibilityState={{ checked: online, disabled: !canToggle || updating }} disabled={!canToggle || updating} onPress={toggleAvailability} hitSlop={10} style={{ width: 45, height: 25, borderRadius: 14, backgroundColor: online ? BLUE : "#C9D1DD", padding: 3, justifyContent: "center", opacity: !canToggle ? 0.5 : 1 }}>
+          {updating ? <ActivityIndicator size="small" color="#fff" /> : <View style={{ width: 19, height: 19, borderRadius: 10, backgroundColor: "#fff", alignSelf: online ? "flex-end" : "flex-start" }} />}
+        </Pressable>
       </View>
 
       <View style={{ flexDirection: "row", gap: 9, marginTop: 12 }}>

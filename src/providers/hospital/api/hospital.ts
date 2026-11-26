@@ -70,6 +70,29 @@ export const rejectEmergencyBooking = (id: string, reason: string) =>
   hospitalApi<any>(`/emergency-bookings/${enc(id)}/reject`, { method: "PATCH", body: json({ reason }) });
 export const completeEmergencyBooking = (id: string) => hospitalApi<any>(`/emergency-bookings/${enc(id)}/complete`, { method: "PATCH" });
 
+/** The ambulance bringing an accepted emergency's patient (once the patient booked one): position, ETA, driver. */
+export type IncomingAmbulance = {
+  emergencyBookingId: string;
+  ambulanceBookingId: string;
+  patientName?: string;
+  patientPhone?: string;
+  emergencyType?: string;
+  /** Ambulance ride status: SEARCHING, EN_ROUTE_TO_PICKUP, ARRIVED, PICKED_UP, PAYMENT_PENDING, COMPLETED, CANCELLED, NO_AMBULANCE_FOUND. */
+  status: string;
+  patientOnBoard: boolean;
+  ambulanceType?: string | null;
+  pickup?: { lat: number; lng: number; address?: string | null } | null;
+  destination?: { lat: number; lng: number; address?: string | null } | null;
+  driver?: { name: string; phone: string; plateNumber: string; ambulanceType?: string | null } | null;
+  /** Only while the ride is under way. */
+  location?: { lat: number; lng: number; heading?: number | null; updatedAt: string } | null;
+  /** To the patient before pickup, to this hospital after. */
+  etaMinutes?: number | null;
+  distanceKm?: number | null;
+  bookedAt?: string;
+};
+export const getIncomingAmbulance = (id: string) => hospitalApi<IncomingAmbulance>(`/emergency-bookings/${enc(id)}/ambulance`);
+
 /* ───────────── Metrics ───────────── */
 export const getMyHospitalMetrics = (body: Record<string, unknown> = {}) =>
   hospitalApi<any>("/metrics/my-hospital", { method: "POST", body: json(body) });

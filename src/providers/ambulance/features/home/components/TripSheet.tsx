@@ -15,7 +15,7 @@ import {
 import { colors, radius, spacing, typography } from "../../../theme";
 import type { Booking } from "../../../types";
 import { Badge, Button, IconButton } from "../../../ui/components";
-import { callPhone, openNavigation } from "../externalApps";
+import { callPhone, openNavigation, openNearbyHospitals } from "../externalApps";
 import { sheetStyles } from "./sheetStyles";
 
 type Props = {
@@ -134,6 +134,14 @@ export default function TripSheet({
               icon="navigate"
               variant="secondary"
               onPress={() => openNavigation(destination)}
+              style={sheetStyles.grow}
+            />
+          ) : headedToHospital ? (
+            <Button
+              title="Find hospital"
+              icon="search"
+              variant="secondary"
+              onPress={openNearbyHospitals}
               style={sheetStyles.grow}
             />
           ) : null}
