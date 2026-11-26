@@ -1,11 +1,13 @@
 import { useFocusEffect } from "@react-navigation/native";
 import { useCallback, useState } from "react";
-import { ScrollView, Text, View } from "react-native";
+import { RefreshControl, ScrollView, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { getProviderAppointments } from "../../../api/laboratory";
+import {
+  getHomeCollectionByAppointment,
+  getProviderAppointments,
+} from "../../../api/laboratory";
 import CollectionSummary from "../components/CollectionSummary";
 import HomeCollectionCard from "../components/HomeCollectionCard";
-
 
 type Appointment = {
   [key: string]: any;
@@ -36,25 +38,97 @@ type Appointment = {
 
 function appointmentMatchesProvider(appointment: Appointment, labId?: string, scanCenterId?: string) {
   const appointmentLabId = appointment.labId || appointment.lab?.labId || null;
-  const appointmentScanCenterId = appointment.scanCenterId || appointment.scanCenter?.scanCenterId || null;
-  return Boolean((labId && appointmentLabId === labId) || (scanCenterId && appointmentScanCenterId === scanCenterId));
+  const appointmentScanCenterId =
+    appointment.scanCenterId || appointment.scanCenter?.scanCenterId || null;
+  return Boolean(
+    (labId && appointmentLabId === labId) ||
+      (scanCenterId && appointmentScanCenterId === scanCenterId),
+  );
 }
-
 
 export default function HomeCollection({ navigation }: any) {
   const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [labId, setLabId] = useState<string | undefined>(undefined);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
-  const load = async () => {
-    setLoading(true);
+  const load = async (isRefresh = false) => {
+    if (isRefresh) setRefreshing(true);
+    else setLoading(true);
+
     try {
       const { context, response } = await getProviderAppointments();
-      const data = Array.isArray(response?.data) ? response.data : [];
-      setAppointments(data.filter((item: Appointment) => appointmentMatchesProvider(item, context.lab?.labId, context.scanCenter?.scanCenterId) && item.appointmentMode === "HOME"));
-    } catch (error) { console.log("Home collection API error:", error); }
-    finally { setLoading(false); }
-  };
-  useFocusEffect(useCallback(() => { load(); }, []));
+      const activeLabId = context?.lab?.labId;
+      setLabId(activeLabId);
 
-  return <SafeAreaView style={{ flex: 1, backgroundColor: "#F6F8FC" }}><View style={{ padding: 16, paddingBottom: 8 }}><Text style={{ fontSize: 22, fontWeight: "900", color: "#172033" }}>Home Collection</Text><Text style={{ fontSize: 11, color: "#687386", marginTop: 4 }}>Track samples collected by the field team</Text><CollectionSummary appointments={appointments} /></View><ScrollView contentContainerStyle={{ padding: 16, paddingTop: 5 }}>{loading ? <Text style={{ color: "#758096" }}>Loading collections...</Text> : appointments.length ? appointments.map((item) => <HomeCollectionCard key={item.appointmentId} appointment={item} navigation={navigation} />) : <View style={{ backgroundColor: "#fff", borderRadius: 14, padding: 18 }}><Text style={{ color: "#758096", fontSize: 12 }}>No home collection appointments.</Text></View>}</ScrollView></SafeAreaView>;
+      const data = Array.isArray(response?.data) ? response.data : [];
+      const homeItems = data.filter(
+        (item: Appointment) =>
+          appointmentMatchesProvider(item, activeLabId, context?.scanCenter?.scanCenterId) &&
+          item.appointmentMode === "HOME",
+      );
+
+      const hydrated = await Promise.all(
+        homeItems.map(async (item: Appointment) => {
+          if (item.homeCollection) return item;
+          try {
+            const hcRes = await getHomeCollectionByAppointment(item.appointmentId);
+            const hcData = hcRes?.data?.data ?? hcRes?.data ?? null;
+            return hcData ? { ...item, homeCollection: hcData } : item;
+          } catch {
+            return item;
+          }
+        }),
+      );
+
+      setAppointments(hydrated);
+    } catch (error) {
+      console.log("Home collection API error:", error);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
+
+  useFocusEffect(
+    useCallback(() => {
+      load(false);
+    }, []),
+  );
+
+  return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: "#F6F8FC" }}>
+      <View style={{ padding: 16, paddingBottom: 8 }}>
+        <Text style={{ fontSize: 22, fontWeight: "900", color: "#172033" }}>
+          Home Collection
+        </Text>
+        <Text style={{ fontSize: 11, color: "#687386", marginTop: 4 }}>
+          Acknowledge bookings and assign a lab collector or push to independent pool
+        </Text>
+        <CollectionSummary appointments={appointments} />
+      </View>
+      <ScrollView
+        contentContainerStyle={{ padding: 16, paddingTop: 5 }}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => load(true)} />}
+      >
+        {loading ? (
+          <Text style={{ color: "#758096" }}>Loading collections...</Text>
+        ) : appointments.length ? (
+          appointments.map((item) => (
+            <HomeCollectionCard
+              key={item.appointmentId}
+              appointment={{ ...item, labId: item.labId || labId }}
+              navigation={navigation}
+            />
+          ))
+        ) : (
+          <View style={{ backgroundColor: "#fff", borderRadius: 14, padding: 18 }}>
+            <Text style={{ color: "#758096", fontSize: 12 }}>
+              No home collection appointments.
+            </Text>
+          </View>
+        )}
+      </ScrollView>
+    </SafeAreaView>
+  );
 }
