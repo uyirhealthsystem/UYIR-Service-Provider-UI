@@ -1,23 +1,76 @@
-import React, { useState } from "react";
-import { Alert, Pressable, StyleSheet, Switch, Text, TextInput, View } from "react-native";
+import React, { useMemo, useState } from "react";
+import { Alert, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { checkInDoctor, checkOutDoctor, assignDoctorToSeat, removeDoctorFromSeat, setDoctorActive } from "../../../api/hospital";
-import { Avatar, Banner, C, Button, Card, Empty, Pill, Screen, SectionTitle } from "../../../components/ui";
+import { Avatar, Banner, C, Button, Card, Chip, Empty, Pill, Screen, SectionTitle } from "../../../components/ui";
 import { useHospitalData } from "../../../hooks/useHospitalData";
 import { useHospitalStore } from "../../provider-state/store";
+
+type Row = ReturnType<typeof useHospitalData>["rows"][number];
+type SectionKey = "AVAILABLE" | "NOT_AVAILABLE" | "NO_SEAT";
+type StatusFilter = "ALL" | SectionKey | "REMOVED";
+
+// Doctors are grouped by what the hospital needs to act on: who is taking patients now,
+// who is seated but checked out, and who still needs a seat before patients can book them.
+const SECTIONS: [SectionKey, string][] = [
+  ["AVAILABLE", "Available now"],
+  ["NOT_AVAILABLE", "In a seat · not available"],
+  ["NO_SEAT", "No seat"],
+];
+const STATUS_FILTERS: [StatusFilter, string][] = [
+  ["ALL", "All"],
+  ["AVAILABLE", "Available"],
+  ["NOT_AVAILABLE", "Not available"],
+  ["NO_SEAT", "No seat"],
+  ["REMOVED", "Removed"],
+];
 
 export default function HospitalDoctors({ navigation }: any) {
   const { hospitalId } = useHospitalStore();
   const { rows, seats, loading, error, reload } = useHospitalData();
   const [search, setSearch] = useState("");
   const [busyId, setBusyId] = useState("");
-  const [showRemoved, setShowRemoved] = useState(false);
+  const [status, setStatus] = useState<StatusFilter>("ALL");
+  const [specialty, setSpecialty] = useState("");
+  const [collapsed, setCollapsed] = useState<Partial<Record<SectionKey, boolean>>>({});
 
   const emptySeat = seats?.seats.find((s) => !s.doctorId);
+
+  // Specialties in use, A-Z (from all doctors, so the chips don't jump around while filtering).
+  const specialties = useMemo(
+    () => Array.from(new Set(rows.map((r) => r.specialty).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
+    [rows],
+  );
+
+  // Search + specialty first; the status chips then show counts within that.
   const q = search.trim().toLowerCase();
-  const match = (r: { name: string; specialty: string }) => !q || `${r.name} ${r.specialty}`.toLowerCase().includes(q);
-  const active = rows.filter((r) => r.active && match(r));
-  const removed = rows.filter((r) => !r.active && match(r));
+  const matched = useMemo(
+    () => rows
+      .filter((r) => (!q || `${r.name} ${r.specialty}`.toLowerCase().includes(q)) && (!specialty || r.specialty === specialty))
+      .sort((a, b) => a.name.localeCompare(b.name)),
+    [rows, q, specialty],
+  );
+  const activeList = matched.filter((r) => r.active);
+  const removedList = matched.filter((r) => !r.active);
+  const groups: Record<SectionKey, Row[]> = {
+    AVAILABLE: activeList.filter((r) => r.seated && r.onDuty),
+    NOT_AVAILABLE: activeList.filter((r) => r.seated && !r.onDuty),
+    NO_SEAT: activeList.filter((r) => !r.seated),
+  };
+  const counts: Record<StatusFilter, number> = {
+    ALL: activeList.length,
+    AVAILABLE: groups.AVAILABLE.length,
+    NOT_AVAILABLE: groups.NOT_AVAILABLE.length,
+    NO_SEAT: groups.NO_SEAT.length,
+    REMOVED: removedList.length,
+  };
+  const sections = SECTIONS
+    .filter(([key]) => status === "ALL" || status === key)
+    .map(([key, title]) => ({ key, title, items: groups[key] }));
+  const shown = counts[status];
+  const filtersOn = !!q || !!specialty || status !== "ALL";
+  const clearFilters = () => { setSearch(""); setSpecialty(""); setStatus("ALL"); };
+  const toggleSection = (key: SectionKey) => setCollapsed((c) => ({ ...c, [key]: !c[key] }));
 
   const buySeat = () => navigation.navigate("HospitalAssign", { buy: true });
 
@@ -70,6 +123,68 @@ export default function HospitalDoctors({ navigation }: any) {
     );
   };
 
+  const renderDoctor = (r: Row) => (
+    <Card key={r.id}>
+      <View style={styles.top}>
+        <Avatar name={r.name} />
+        <Pressable style={{ flex: 1 }} onPress={() => navigation.navigate("HospitalDoctorDashboard", { doctorId: r.id, raw: r.raw })}>
+          <Text style={styles.name} numberOfLines={1}>{r.name}</Text>
+          <Text style={styles.sub} numberOfLines={1}>{r.specialty}{r.fee ? ` · ₹${r.fee}` : ""}</Text>
+          <View style={{ flexDirection: "row", gap: 6, marginTop: 6 }}>
+            {r.seated ? <Pill text={r.seatType === "FREE" ? "Free seat" : "Paid seat"} tone="primary" /> : <Pill text="No seat" tone="warn" />}
+            <Pill text="View dashboard ›" tone="gray" />
+          </View>
+        </Pressable>
+        <Pressable hitSlop={8} onPress={() => navigation.navigate("HospitalDoctorForm", { doctor: r.raw })} style={styles.iconBtn}>
+          <Ionicons name="create-outline" size={20} color={C.primary} />
+        </Pressable>
+        <Pressable hitSlop={8} onPress={() => remove(r)} style={styles.iconBtn}>
+          <Ionicons name="trash-outline" size={20} color={C.danger} />
+        </Pressable>
+      </View>
+
+      <View style={styles.availRow}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.availTitle}>{r.onDuty ? "Available" : "Not available"}</Text>
+          <Text style={styles.availSub}>
+            {r.seated ? (r.onDuty ? "Checked in · receives emergency (SOS) requests" : "Checked out · no emergency requests") : "Place in a seat to enable"}
+          </Text>
+        </View>
+        {r.seated ? (
+          <Switch
+            value={r.onDuty} disabled={busyId === r.id}
+            onValueChange={(on) => toggleAvailable(r, on)}
+            trackColor={{ true: C.success, false: "#CBD5E1" }} thumbColor="#fff"
+          />
+        ) : (
+          <Button small title="Assign seat" variant="secondary" loading={busyId === r.id} onPress={() => assignSeat(r)} />
+        )}
+      </View>
+
+      <View style={styles.footRow}>
+        <Text style={styles.foot}>
+          Today: <Text style={styles.footBold}>{r.booked}</Text>{r.limit != null ? ` / ${r.limit}` : ""} tokens
+        </Text>
+        <Pressable onPress={() => navigation.navigate("HospitalSlots", { doctorId: r.id })}>
+          <Text style={styles.link}>Token limit</Text>
+        </Pressable>
+      </View>
+    </Card>
+  );
+
+  const renderRemoved = (r: Row) => (
+    <Card key={r.id} style={{ opacity: 0.9 }}>
+      <View style={styles.top}>
+        <Avatar name={r.name} />
+        <View style={{ flex: 1 }}>
+          <Text style={styles.name} numberOfLines={1}>{r.name}</Text>
+          <Text style={styles.sub} numberOfLines={1}>{r.specialty}</Text>
+        </View>
+        <Button small variant="secondary" title="Restore" loading={busyId === r.id} onPress={() => restore(r)} />
+      </View>
+    </Card>
+  );
+
   const restore = (r: (typeof rows)[number]) => run(r.id, async () => {
     await setDoctorActive(r.id, true);
     if (emptySeat) await assignDoctorToSeat(emptySeat.id, r.id);
@@ -104,80 +219,61 @@ export default function HospitalDoctors({ navigation }: any) {
       <View style={styles.search}>
         <Ionicons name="search" size={18} color={C.gray} />
         <TextInput value={search} onChangeText={setSearch} placeholder="Search name or specialty" placeholderTextColor="#9AA6B7" style={styles.searchInput} />
+        {search ? (
+          <Pressable hitSlop={8} onPress={() => setSearch("")} accessibilityLabel="Clear search">
+            <Ionicons name="close-circle" size={18} color={C.gray} />
+          </Pressable>
+        ) : null}
       </View>
 
-      {active.length === 0 && !loading ? (
-        <Empty icon="people-outline" title={search ? "No doctors match your search" : "No doctors yet"} hint={search ? undefined : "Tap Add to register your first doctor."} />
+      {/* Status filter */}
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips}>
+        {STATUS_FILTERS.map(([key, label]) => (
+          <Chip key={key} label={`${label} (${counts[key]})`} active={status === key} onPress={() => setStatus(key)} />
+        ))}
+      </ScrollView>
+
+      {/* Specialty filter: only worth showing when there is more than one */}
+      {specialties.length > 1 ? (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips}>
+          <Chip label="All specialties" active={!specialty} onPress={() => setSpecialty("")} />
+          {specialties.map((s) => <Chip key={s} label={s} active={specialty === s} onPress={() => setSpecialty(specialty === s ? "" : s)} />)}
+        </ScrollView>
       ) : null}
 
-      {active.map((r) => (
-        <Card key={r.id}>
-          <View style={styles.top}>
-            <Avatar name={r.name} />
-            <Pressable style={{ flex: 1 }} onPress={() => navigation.navigate("HospitalDoctorDashboard", { doctorId: r.id, raw: r.raw })}>
-              <Text style={styles.name} numberOfLines={1}>{r.name}</Text>
-              <Text style={styles.sub} numberOfLines={1}>{r.specialty}{r.fee ? ` · ₹${r.fee}` : ""}</Text>
-              <View style={{ flexDirection: "row", gap: 6, marginTop: 6 }}>
-                {r.seated ? <Pill text={r.seatType === "FREE" ? "Free seat" : "Paid seat"} tone="primary" /> : <Pill text="No seat" tone="warn" />}
-                <Pill text="View dashboard ›" tone="gray" />
-              </View>
-            </Pressable>
-            <Pressable hitSlop={8} onPress={() => navigation.navigate("HospitalDoctorForm", { doctor: r.raw })} style={styles.iconBtn}>
-              <Ionicons name="create-outline" size={20} color={C.primary} />
-            </Pressable>
-            <Pressable hitSlop={8} onPress={() => remove(r)} style={styles.iconBtn}>
-              <Ionicons name="trash-outline" size={20} color={C.danger} />
-            </Pressable>
-          </View>
+      {filtersOn ? (
+        <View style={styles.resultRow}>
+          <Text style={styles.resultText}>{`${shown} doctor${shown === 1 ? "" : "s"} found`}</Text>
+          <Pressable onPress={clearFilters}><Text style={styles.link}>Clear filters</Text></Pressable>
+        </View>
+      ) : null}
 
-          <View style={styles.availRow}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.availTitle}>{r.onDuty ? "Available" : "Not available"}</Text>
-              <Text style={styles.availSub}>
-                {r.seated ? (r.onDuty ? "Checked in · receives emergency (SOS) requests" : "Checked out · no emergency requests") : "Place in a seat to enable"}
-              </Text>
-            </View>
-            {r.seated ? (
-              <Switch
-                value={r.onDuty} disabled={busyId === r.id}
-                onValueChange={(on) => toggleAvailable(r, on)}
-                trackColor={{ true: C.success, false: "#CBD5E1" }} thumbColor="#fff"
-              />
-            ) : (
-              <Button small title="Assign seat" variant="secondary" loading={busyId === r.id} onPress={() => assignSeat(r)} />
-            )}
-          </View>
+      {rows.length === 0 && !loading ? (
+        <Empty icon="people-outline" title="No doctors yet" hint="Tap Add to register your first doctor." />
+      ) : rows.length > 0 && shown === 0 ? (
+        <Empty icon="search-outline" title="No doctors match" hint="Try another name, specialty or filter." />
+      ) : null}
 
-          <View style={styles.footRow}>
-            <Text style={styles.foot}>
-              Today: <Text style={styles.footBold}>{r.booked}</Text>{r.limit != null ? ` / ${r.limit}` : ""} tokens
-            </Text>
-            <Pressable onPress={() => navigation.navigate("HospitalSlots", { doctorId: r.id })}>
-              <Text style={styles.link}>Token limit</Text>
-            </Pressable>
+      {status === "REMOVED"
+        ? removedList.map(renderRemoved)
+        : sections.map((sec) => sec.items.length === 0 ? null : (
+          <View key={sec.key}>
+            <SectionTitle
+              title={`${sec.title} (${sec.items.length})`}
+              right={
+                <Pressable hitSlop={8} onPress={() => toggleSection(sec.key)}>
+                  <Text style={styles.link}>{collapsed[sec.key] ? "Show" : "Hide"}</Text>
+                </Pressable>
+              }
+            />
+            {collapsed[sec.key] ? null : sec.items.map(renderDoctor)}
           </View>
-        </Card>
-      ))}
+        ))}
 
-      {removed.length > 0 ? (
-        <>
-          <SectionTitle
-            title={`Removed doctors (${removed.length})`}
-            right={<Pressable onPress={() => setShowRemoved((v) => !v)}><Text style={styles.link}>{showRemoved ? "Hide" : "Show"}</Text></Pressable>}
-          />
-          {showRemoved ? removed.map((r) => (
-            <Card key={r.id} style={{ opacity: 0.9 }}>
-              <View style={styles.top}>
-                <Avatar name={r.name} />
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.name} numberOfLines={1}>{r.name}</Text>
-                  <Text style={styles.sub} numberOfLines={1}>{r.specialty}</Text>
-                </View>
-                <Button small variant="secondary" title="Restore" loading={busyId === r.id} onPress={() => restore(r)} />
-              </View>
-            </Card>
-          )) : null}
-        </>
+      {status === "ALL" && removedList.length > 0 ? (
+        <Pressable onPress={() => setStatus("REMOVED")} style={styles.removedLink}>
+          <Text style={styles.link}>{`Removed doctors (${removedList.length}) ›`}</Text>
+        </Pressable>
       ) : null}
     </Screen>
   );
@@ -201,4 +297,8 @@ const styles = StyleSheet.create({
   foot: { fontSize: 12.5, color: C.muted },
   footBold: { fontWeight: "800", color: C.ink },
   link: { color: C.primary, fontWeight: "700", fontSize: 13 },
+  chips: { gap: 8, paddingBottom: 10 },
+  resultRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 6 },
+  resultText: { fontSize: 13, color: C.muted, fontWeight: "600" },
+  removedLink: { alignItems: "center", paddingVertical: 14 },
 });
