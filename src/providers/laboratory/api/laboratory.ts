@@ -10,7 +10,6 @@ type Appointment = {
   scanCenter?: { scanCenterId?: string } | null;
 };
 
-
 /* =========================================================
    LAB APIs
 ========================================================= */
@@ -157,26 +156,102 @@ export function getReschedules(appointmentId: string) {
 }
 
 /* =========================================================
-   HOME COLLECTION
+   HOME COLLECTION & SAMPLE HANDOVER
 ========================================================= */
 
 export function getHomeCollection(homeCollectionId: string) {
   console.log("LAB API: GET /homecollection/:id", homeCollectionId);
 
-  return laboratoryApi(`/homecollection/${homeCollectionId}`);
+  return laboratoryApi(
+    `/homecollection/${encodeURIComponent(homeCollectionId)}`,
+  );
+}
+
+export function getHomeCollections(params?: {
+  labId?: string;
+  status?: string;
+}) {
+  const query = new URLSearchParams();
+  if (params?.labId) query.set("labId", params.labId);
+  if (params?.status) query.set("status", params.status);
+  const qs = query.toString();
+
+  return laboratoryApi(`/homecollection${qs ? `?${qs}` : ""}`);
+}
+
+export function getHomeCollectionByAppointment(appointmentId: string) {
+  return laboratoryApi(
+    `/homecollection/appointment/${encodeURIComponent(appointmentId)}`,
+  );
+}
+
+export function acknowledgeHomeCollection(homeCollectionId: string) {
+  return laboratoryApi(
+    `/homecollection/${encodeURIComponent(homeCollectionId)}/acknowledge`,
+    { method: "POST" },
+  );
+}
+
+export function pushHomeCollectionToIndependentPool(homeCollectionId: string) {
+  return laboratoryApi(
+    `/homecollection/${encodeURIComponent(homeCollectionId)}/push-to-independent-pool`,
+    { method: "POST" },
+  );
+}
+
+export function getCollectors() {
+  return laboratoryApi("/collectors");
+}
+
+export function getCollectorsByLab(labId: string) {
+  return laboratoryApi(`/collector/lab/${encodeURIComponent(labId)}`);
+}
+
+export function assignLabCollector(
+  homeCollectionId: string,
+  collectorId: string,
+) {
+  return laboratoryApi(
+    `/homecollection/${encodeURIComponent(homeCollectionId)}/assign-collector`,
+    {
+      method: "POST",
+      body: JSON.stringify({ collectorId }),
+    },
+  );
+}
+
+export function getSamples() {
+  return laboratoryApi("/samples");
+}
+
+export function getSamplesByAppointmentTest(appointmentTestId: string) {
+  return laboratoryApi(
+    `/sample/appointmenttest/${encodeURIComponent(appointmentTestId)}`,
+  );
+}
+
+export function getSampleById(sampleId: string) {
+  return laboratoryApi(`/sample/${encodeURIComponent(sampleId)}`);
 }
 
 export function generateSampleHandoverOtp(sampleId: string) {
-  return laboratoryApi(`/sample/${encodeURIComponent(sampleId)}/handover-otp/generate`, {
-    method: "POST",
-  });
+  return laboratoryApi(
+    `/sample/${encodeURIComponent(sampleId)}/handover-otp/generate`,
+    { method: "POST" },
+  );
 }
 
 export function updateLabSampleStatus(
   sampleId: string,
   payload: {
     status: "RECEIVED" | "PROCESSING" | "REJECTED" | "COMPLETED";
-    condition?: "GOOD" | "DAMAGED" | "LEAKED" | "INSUFFICIENT" | "HEMOLYZED" | "REJECTED";
+    condition?:
+      | "GOOD"
+      | "DAMAGED"
+      | "LEAKED"
+      | "INSUFFICIENT"
+      | "HEMOLYZED"
+      | "REJECTED";
     rejectionReason?: string;
     notes?: string;
   },
@@ -218,9 +293,7 @@ export function updateAppointment(
    Latest backend uses PUT /appointment/:appointmentId
 ========================================================= */
 
-export function cancelAppointment(payload: {
-  appointmentId: string;
-}) {
+export function cancelAppointment(payload: { appointmentId: string }) {
   console.log("LAB API: CANCEL APPOINTMENT", payload.appointmentId);
 
   return updateAppointment(payload.appointmentId, {
@@ -526,13 +599,11 @@ export function filterProviderAppointments(
       appointment.labId || appointment.lab?.labId || null;
 
     const appointmentScanCenterId =
-      appointment.scanCenterId ||
-      appointment.scanCenter?.scanCenterId ||
-      null;
+      appointment.scanCenterId || appointment.scanCenter?.scanCenterId || null;
 
     return Boolean(
       (labId && appointmentLabId === labId) ||
-        (scanCenterId && appointmentScanCenterId === scanCenterId),
+      (scanCenterId && appointmentScanCenterId === scanCenterId),
     );
   });
 
@@ -623,9 +694,7 @@ export async function getProviderAppointments() {
 
   const filtered = allAppointments.filter((appointment: Appointment) => {
     const appointmentScanCenterId =
-      appointment.scanCenterId ||
-      appointment.scanCenter?.scanCenterId ||
-      null;
+      appointment.scanCenterId || appointment.scanCenter?.scanCenterId || null;
 
     return appointmentScanCenterId === context.scanCenter?.scanCenterId;
   });
