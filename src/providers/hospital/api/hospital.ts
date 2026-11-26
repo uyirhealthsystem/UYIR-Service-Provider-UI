@@ -93,6 +93,25 @@ export type IncomingAmbulance = {
 };
 export const getIncomingAmbulance = (id: string) => hospitalApi<IncomingAmbulance>(`/emergency-bookings/${enc(id)}/ambulance`);
 
+/** How an emergency patient is getting here, as the patient said. */
+export type ArrivalMode = "UYIR_AMBULANCE" | "OTHER_AMBULANCE" | "OWN_WAY";
+/**
+ * An emergency patient coming by another ambulance (108, private) or on their own: where their phone is.
+ * `location` is null before the first fix and once the emergency is over. `distanceKm` is a straight line.
+ */
+export type IncomingPatient = {
+  emergencyBookingId: string;
+  patientName?: string;
+  patientPhone?: string;
+  emergencyType?: string;
+  status: string;
+  arrivalMode?: ArrivalMode | null;
+  location?: { lat: number; lng: number; accuracy?: number | null; heading?: number | null; speed?: number | null; recordedAt?: string; updatedAt: string } | null;
+  hospital?: { lat: number; lng: number } | null;
+  distanceKm?: number | null;
+};
+export const getIncomingPatient = (id: string) => hospitalApi<IncomingPatient>(`/emergency-bookings/${enc(id)}/patient-location`);
+
 /* ───────────── Metrics ───────────── */
 export const getMyHospitalMetrics = (body: Record<string, unknown> = {}) =>
   hospitalApi<any>("/metrics/my-hospital", { method: "POST", body: json(body) });

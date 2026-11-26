@@ -94,7 +94,17 @@ export default function HospitalEmergencies() {
                 <Ionicons name="call" size={15} color={C.primary} /><Text style={styles.callText}>{e.patientPhone}</Text>
               </Pressable>
             ) : null}
-            {st === "ACCEPTED" && e.ambulanceBookingId ? (
+            {st === "ACCEPTED" && (e.arrivalMode === "OTHER_AMBULANCE" || e.arrivalMode === "OWN_WAY") ? (
+              // No Uyir ambulance: follow the patient's phone instead.
+              <Pressable style={styles.incoming} onPress={() => navigation.navigate("HospitalIncomingPatient", { bookingId: String(e.id), patientName: e.patientName })}>
+                <Ionicons name={e.arrivalMode === "OTHER_AMBULANCE" ? "medkit" : "walk"} size={18} color={C.danger} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.incomingTitle}>{e.arrivalMode === "OTHER_AMBULANCE" ? "Patient is coming by another ambulance" : "Patient is coming on their own"}</Text>
+                  <Text style={styles.incomingSub}>Track the patient's phone live: position and distance</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={18} color={C.danger} />
+              </Pressable>
+            ) : st === "ACCEPTED" && e.ambulanceBookingId ? (
               <Pressable style={styles.incoming} onPress={() => navigation.navigate("HospitalIncomingAmbulance", { bookingId: String(e.id), patientName: e.patientName })}>
                 <Ionicons name="navigate" size={18} color={C.danger} />
                 <View style={{ flex: 1 }}>
@@ -103,7 +113,7 @@ export default function HospitalEmergencies() {
                 </View>
                 <Ionicons name="chevron-forward" size={18} color={C.danger} />
               </Pressable>
-            ) : st === "ACCEPTED" ? <Text style={styles.ownWay}>No Uyir ambulance booked: the patient may come on their own.</Text> : null}
+            ) : st === "ACCEPTED" ? <Text style={styles.ownWay}>Waiting for the patient to say how they are coming.</Text> : null}
             {st === "ACCEPTED" ? <Button style={{ marginTop: 12 }} variant="success" icon="checkmark-done" title="Mark completed" loading={busy === String(e.id)} onPress={() => complete(String(e.id))} /> : null}
             {st === "REQUESTED" ? <Text style={styles.waiting}>Waiting for your response in the alert.</Text> : null}
           </Card>

@@ -16,6 +16,7 @@ import HospitalInvoices from "./features/billing/screens/HospitalInvoices";
 import HospitalInvoiceDetail from "./features/billing/screens/HospitalInvoiceDetail";
 import HospitalPayoutAccount from "./features/billing/screens/HospitalPayoutAccount";
 import HospitalIncomingAmbulance from "./features/emergencies/screens/HospitalIncomingAmbulance";
+import HospitalIncomingPatient from "./features/emergencies/screens/HospitalIncomingPatient";
 import EmergencyAlertModal from "./components/EmergencyAlertModal";
 import ClaimHospital from "./features/claim/screens/ClaimHospital";
 import { Banner, Button, C } from "./components/ui";
@@ -70,6 +71,7 @@ function HospitalGate() {
         <Stack.Screen name="HospitalInvoiceDetail" component={HospitalInvoiceDetail} />
         <Stack.Screen name="HospitalPayoutAccount" component={HospitalPayoutAccount} />
         <Stack.Screen name="HospitalIncomingAmbulance" component={HospitalIncomingAmbulance} />
+        <Stack.Screen name="HospitalIncomingPatient" component={HospitalIncomingPatient} />
       </Stack.Navigator>
       {/* Sits above every screen. Cannot be dismissed: the nurse must accept or decline. */}
       <EmergencyAlertModal />
