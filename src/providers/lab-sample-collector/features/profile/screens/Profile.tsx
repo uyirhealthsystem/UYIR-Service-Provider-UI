@@ -2,15 +2,13 @@ import { Ionicons } from "@expo/vector-icons";
 import { Alert, Pressable, ScrollView, Text, TextInput, View, ActivityIndicator } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 const BG = "#F5F8FC", BLUE = "#1473E6", MUTED = "#758096", TEXT = "#172033";
-import * as Location from "expo-location";
 import { useLabSampleCollector } from "../../provider-state/store";
-import { updateCollectorLocation } from "../../../api/collector";
 import { useAuth } from "../../../../../auth/store";
 import { useState } from "react";
 import LanguageSelector from "../../../../../language/components/LanguageSelector";
 
 export default function Profile({ navigation }: any) {
-  const { profile, refresh, loading, updatePersonalProfile } = useLabSampleCollector();
+  const { profile, loading, updatePersonalProfile, setAvailability } = useLabSampleCollector();
   const { logout } = useAuth();
   const [updating, setUpdating] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -54,16 +52,7 @@ export default function Profile({ navigation }: any) {
   const updateAvailability = async (isAvailable: boolean) => {
     try {
       setUpdating(true);
-      if (isAvailable) {
-        const permission = await Location.requestForegroundPermissionsAsync();
-        if (!permission.granted) throw new Error("Location permission is required.");
-        const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
-        await updateCollectorLocation(position.coords.latitude, position.coords.longitude, true);
-      } else {
-        if (profile?.latitude == null || profile?.longitude == null) throw new Error("No location is available to preserve.");
-        await updateCollectorLocation(profile.latitude, profile.longitude, false);
-      }
-      await refresh();
+      await setAvailability(isAvailable);
     } catch (error: any) {
       Alert.alert("Availability update failed", error?.message || "Please try again.");
     } finally {
